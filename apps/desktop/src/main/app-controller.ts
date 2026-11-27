@@ -1,5 +1,7 @@
 import { BuildWardenDatabase } from "@buildwarden/db";
 import type {
+  AcpAgentSessionImportInput,
+  LinkedHostInput,
   AnswerAutomationQuestionInput,
   AppWarning,
   AssistProjectForgeIssueInput,
@@ -101,6 +103,7 @@ export class AppController
       | "setDesignBackgroundImage"
       | "listHostDirectories"
       | "createRemoteAccessPairing"
+      | "createRemoteAccessAgentToken"
       | "listRemoteAccessSessions"
       | "revokeRemoteAccessSession"
       | "onRunEvent"
@@ -305,6 +308,12 @@ export class AppController
   deleteProviderAccount(providerAccountId: string) { return this.services.providerAccounts.deleteProviderAccount(providerAccountId); }
   recheckProviderCapabilities(providerAccountId: string) { return this.services.providerAccounts.recheckProviderCapabilities(providerAccountId); }
   listAcpRegistryAgents() { return this.services.providerAccounts.listAcpRegistryAgents(); }
+  listAcpAgentSessions(providerAccountId: string, projectId: string) { return this.services.acpSessions.listAcpAgentSessions(providerAccountId, projectId); }
+  importAcpAgentSession(input: AcpAgentSessionImportInput) { return this.services.acpSessions.importAcpAgentSession(input); }
+  async listLinkedHosts() { return this.services.linkedHosts.listLinkedHosts(); }
+  saveLinkedHost(input: LinkedHostInput) { return this.services.linkedHosts.saveLinkedHost(input); }
+  removeLinkedHost(hostId: string) { return this.services.linkedHosts.removeLinkedHost(hostId); }
+  checkLinkedHost(hostId: string) { return this.services.linkedHosts.checkLinkedHost(hostId); }
   deleteModel(modelId: string) { return this.services.providerAccounts.deleteModel(modelId); }
   getModelDeletionImpact(modelId: string) { return this.services.providerAccounts.getModelDeletionImpact(modelId); }
 

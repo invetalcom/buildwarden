@@ -50,16 +50,47 @@ export class RunDeletionService extends AppService<
     }
   }
 
+  /** The orchestration at the top of a delegation tree: the one whose coordinator no task owns. */
+  private topOrchestration(orchestration: OrchestrationRecord): OrchestrationRecord {
+    let top = orchestration;
+    for (let depth = 0; depth < 16; depth += 1) {
+      const parentTask = this.db.getOrchestrationTaskByChildRunId(top.coordinatorRunId);
+      if (!parentTask) break;
+      try {
+        top = this.db.getOrchestration(parentTask.orchestrationId);
+      } catch {
+        break;
+      }
+    }
+    return top;
+  }
+
   async getRunDeletionImpact(runId: string): Promise<RunDeletionImpact> {
     this.db.getRun(runId);
     const childTask = this.db.getOrchestrationTaskByChildRunId(runId);
-    const orchestration = childTask
+    const own = childTask
       ? this.db.getOrchestration(childTask.orchestrationId)
       : this.db.getOrchestrationByCoordinatorRunId(runId);
+    // A grandchild's coordinator is a delegated run itself; the tree is deleted from its top.
+    const orchestration = own ? this.topOrchestration(own) : null;
     const coordinatorRunId = orchestration?.coordinatorRunId ?? runId;
-    const childRunIds = orchestration
-      ? this.db.listOrchestrationTasks(orchestration.id).flatMap((task) => task.childRunId ? [task.childRunId] : [])
-      : [];
+    // With nested delegation a child coordinates an orchestration of its own; the tree goes together.
+    // Every orchestration of the tree, however wide: a plan that missed one would leave its runs
+    // and worktrees behind. Each is visited once, so the walk ends.
+    const orchestrations = orchestration ? [orchestration] : [];
+    const visited = new Set(orchestrations.map((entry) => entry.id));
+    const childRunIds: string[] = [];
+    for (let index = 0; index < orchestrations.length; index += 1) {
+      for (const task of this.db.listOrchestrationTasks(orchestrations[index]!.id)) {
+        if (!task.childRunId) continue;
+        childRunIds.push(task.childRunId);
+        const nested = this.db.getOrchestrationByCoordinatorRunId(task.childRunId);
+        if (nested && !visited.has(nested.id)) {
+          visited.add(nested.id);
+          orchestrations.push(nested);
+        }
+      }
+    }
     const runIds = [...new Set([coordinatorRunId, ...childRunIds])];
     const runs = runIds.flatMap((id) => {
       try { return [this.db.getRun(id)]; } catch { return []; }
@@ -67,20 +98,19 @@ export class RunDeletionService extends AppService<
     const ownedDirectories = runs
       .filter((entry) => entry.workspaceType === "worktree" || entry.workspaceType === "copy")
       .map((entry) => entry.worktreePath);
-    const artifactPaths = orchestration
-      ? [
-          join(this.services.orchestration.getOrchestrationArtifactRoot(), orchestration.id),
-          ...this.db.listOrchestrationWaves(orchestration.id).flatMap((wave) => wave.baselinePath ? [wave.baselinePath] : []),
-          ...this.db.listOrchestrationTasks(orchestration.id).flatMap((task) => {
-            const adoption = this.db.getOrchestrationAdoption(task.id);
-            return adoption?.backupPath ? [adoption.backupPath] : [];
-          }),
-        ]
-      : [];
+    const artifactPaths = orchestrations.flatMap((entry) => [
+      join(this.services.orchestration.getOrchestrationArtifactRoot(), entry.id),
+      ...this.db.listOrchestrationWaves(entry.id).flatMap((wave) => wave.baselinePath ? [wave.baselinePath] : []),
+      ...this.db.listOrchestrationTasks(entry.id).flatMap((task) => {
+        const adoption = this.db.getOrchestrationAdoption(task.id);
+        return adoption?.backupPath ? [adoption.backupPath] : [];
+      }),
+    ]);
     return {
       runId,
       coordinatorRunId,
       orchestrationId: orchestration?.id ?? null,
+      ...(orchestrations.length > 1 ? { nestedOrchestrationIds: orchestrations.slice(1).map((entry) => entry.id) } : {}),
       runIds,
       runningRunIds: runIds.filter((id) => this.services.activeWorkers.runWorkers.has(id)),
       ownedDirectories,
@@ -90,17 +120,40 @@ export class RunDeletionService extends AppService<
     };
   }
 
-  /** The run that a run is deleted with. A review belongs to its run, and that run may in turn belong to a coordinator. */
+  /**
+   * The run that a run is deleted with. A review belongs to its run, and that run may in turn
+   * belong to a coordinator, which with nested delegation may belong to one of its own.
+   */
   private resolveRetentionRootRunId(run: RunRecord): string {
-    const rootRunId = retentionRootRunId(run);
-    const childTask = this.db.getOrchestrationTaskByChildRunId(rootRunId);
-    if (!childTask) return rootRunId;
-    try {
-      return this.db.getOrchestration(childTask.orchestrationId).coordinatorRunId;
-    } catch {
-      /* The orchestration is gone; the run it left behind stands on its own. */
-      return rootRunId;
+    let rootRunId = retentionRootRunId(run);
+    for (let depth = 0; depth < 16; depth += 1) {
+      const childTask = this.db.getOrchestrationTaskByChildRunId(rootRunId);
+      if (!childTask) break;
+      try {
+        rootRunId = this.db.getOrchestration(childTask.orchestrationId).coordinatorRunId;
+      } catch {
+        /* The orchestration is gone; the run it left behind stands on its own. */
+        break;
+      }
     }
+    return rootRunId;
+  }
+
+  /** Every run below a coordinator, the runs of its children's own orchestrations included. */
+  private delegatedRunIds(coordinatorRunId: string): string[] {
+    const runIds: string[] = [];
+    const coordinators = [coordinatorRunId];
+    const visited = new Set(coordinators);
+    for (let index = 0; index < coordinators.length; index += 1) {
+      const orchestration = this.db.getOrchestrationByCoordinatorRunId(coordinators[index]!);
+      for (const task of orchestration ? this.db.listOrchestrationTasks(orchestration.id) : []) {
+        if (!task.childRunId || visited.has(task.childRunId)) continue;
+        visited.add(task.childRunId);
+        runIds.push(task.childRunId);
+        coordinators.push(task.childRunId);
+      }
+    }
+    return runIds;
   }
 
   /** Every run that would now be deleted together with these runs, reviews that joined since the plan included. */
@@ -114,11 +167,8 @@ export class RunDeletionService extends AppService<
         continue;
       }
       const rootRunId = this.resolveRetentionRootRunId(run);
-      const orchestration = this.db.getOrchestrationByCoordinatorRunId(rootRunId);
-      const childRunIds = orchestration
-        ? this.db.listOrchestrationTasks(orchestration.id).flatMap((task) => task.childRunId ? [task.childRunId] : [])
-        : [];
-      for (const memberId of [runId, rootRunId, ...childRunIds]) {
+      // The same tree the deletion removes, so a bookmark or recent use anywhere in it protects it.
+      for (const memberId of [runId, rootRunId, ...this.delegatedRunIds(rootRunId)]) {
         group.add(memberId);
         for (const reviewRunId of this.db.listCouncilChildRunIds(memberId)) group.add(reviewRunId);
       }
@@ -310,7 +360,7 @@ export class RunDeletionService extends AppService<
         /* Treat an orphaned task reference as stale and delete the surviving run normally. */
       }
       if (owner) {
-        throw new Error(`This run is owned by an orchestration. Delete coordinator run ${owner.coordinatorRunId} instead.`);
+        throw new Error(`This run is owned by an orchestration. Delete coordinator run ${this.topOrchestration(owner).coordinatorRunId} instead.`);
       }
     }
     await this.services.council.deleteCouncilChildren(run);

@@ -6,7 +6,15 @@ export const ORCHESTRATION_TERMINAL_TASK_STATUSES: ReadonlySet<OrchestrationTask
 
 /** Runtime actions with different recovery rules: cancellation is idempotent; message delivery is not. */
 export class OrchestrationRuntimeActions {
-  constructor(private readonly db: BuildWardenDatabase, private readonly cancelRun: (runId: string) => Promise<void>) {}
+  constructor(
+    private readonly db: BuildWardenDatabase,
+    private readonly cancelRun: (runId: string) => Promise<void>,
+    /**
+     * Stops a remote task's run on its linked host. It throws while the host cannot confirm, so the
+     * cancellation stays pending until it can.
+     */
+    private readonly cancelRemoteRun: (task: OrchestrationTaskRecord) => Promise<void> = async () => undefined,
+  ) {}
 
   async steer(task: OrchestrationTaskRecord, message: OrchestrationTaskMessageRecord, send: () => Promise<void>): Promise<void> {
     const effect = this.db.prepareOrchestrationRuntimeEffect({ orchestrationId: task.orchestrationId, taskId: task.id,
@@ -79,8 +87,16 @@ export class OrchestrationRuntimeActions {
       return;
     }
     if (task.childRunId) await this.cancelRun(task.childRunId);
+    if (task.remote) await this.cancelRemoteRun(task);
     this.db.transaction(() => {
-      this.db.updateOrchestrationTask(task.id, { status: "cancelled", deferredUntil: null, finishedAt: new Date().toISOString(), attentionReason: null });
+      // A host may be creating a run for this task right now. Its id is not known yet, so the
+      // pending stop is saved without one; a crash before the start records it then still warns.
+      const current = this.db.findOrchestrationTask(task.id);
+      const starting = current?.status === "provisioning" && current.remote && !current.remote.runId ? current.remote : null;
+      this.db.updateOrchestrationTask(task.id, {
+        status: "cancelled", deferredUntil: null, finishedAt: new Date().toISOString(), attentionReason: null,
+        ...(starting ? { remote: { ...starting, stopPending: true } } : {}),
+      });
       // Messages may have been queued after the cancellation intent was recorded.
       for (const message of this.db.listOrchestrationTaskMessages(task.orchestrationId)) {
         if (message.taskId === task.id && message.status === "queued") this.db.updateOrchestrationTaskMessage(message.id, "failed");
@@ -107,8 +123,10 @@ export class OrchestrationRuntimeActions {
       } catch (error) {
         this.db.transaction(() => {
           this.db.updateOrchestrationEffect(effect.id, { errorMessage: String(error), incrementAttempts: true });
-          if (effect.taskId && this.db.findOrchestrationTask(effect.taskId)) {
-            this.db.updateOrchestrationTask(effect.taskId, { status: "blocked", attentionReason: "Cancellation recovery failed; retry after checking the child." });
+          // A remote task keeps its pending cancellation, which polling retries until the host confirms.
+          const failedTask = effect.taskId ? this.db.findOrchestrationTask(effect.taskId) : null;
+          if (failedTask && !failedTask.remote) {
+            this.db.updateOrchestrationTask(failedTask.id, { status: "blocked", attentionReason: "Cancellation recovery failed; retry after checking the child." });
           }
         });
         await this.db.flushDurable();

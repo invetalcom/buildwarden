@@ -48,6 +48,7 @@ Host
 Remote connections
   pair [--read-only | --scopes <a,b>] [--origin <url>]
                                      Create a one-time pairing code for a browser or phone
+  agent-token [--read-only]          A token for an MCP client such as Claude Code or Codex
   remote                             Show remote access and Tailscale
   remote expose <private|internet|local>
                                      Publish through Tailscale Serve, Funnel, or not at all
@@ -200,6 +201,19 @@ const runPair: Command = async (args, io) => {
   else if (io.interactive) io.out(await io.renderQr(grant.pairingUrl));
 };
 
+const runAgentToken: Command = async (args, io) => {
+  const { values } = parseCommand(args, { "read-only": { type: "boolean" } }, 0);
+  const issued = await io.request("agentToken", { readOnly: values["read-only"] === true });
+  io.out(rows([
+    ["MCP URL", issued.mcpUrl],
+    ["Token", issued.token],
+    ["Access", issued.session.scopes.join(", ")],
+    ["Expires", new Date(issued.session.expiresAt).toLocaleString()],
+  ]));
+  io.out(`claude mcp add --transport http buildwarden ${issued.mcpUrl} --header "Authorization: Bearer ${issued.token}"`);
+  io.out(`The token is shown once. Revoke it with: buildwarden sessions revoke ${issued.session.id}`);
+};
+
 const runRemote: Command = async (args, io) => {
   const { positionals: [action = "status", first, second] } = parseCommand(args, {}, 3);
   if (action === "status") {
@@ -319,6 +333,7 @@ const COMMANDS: Record<string, Command> = {
     io.out("BuildWarden is stopping.");
   },
   pair: runPair,
+  "agent-token": runAgentToken,
   remote: runRemote,
   sessions: runSessions,
   proxy: runProxy,

@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { BuildWardenDatabase } from "@buildwarden/db";
 import type { OrchestrationRecord, OrchestrationTaskRecord, RunDeletionImpact, RunRecord } from "@buildwarden/shared";
 import { AGENT_ACTIVITY_EVENT_TYPES } from "../orchestration-delivery";
+import { ORCHESTRATION_TERMINAL_TASK_STATUSES } from "../orchestration-runtime-actions";
 import { recoverOrchestrationAdoption, removeOwnedOrchestrationArtifact } from "../orchestration-workspace";
 import { AppService } from "./app-service";
 import { SELECTED_PROJECT_KEY, SELECTED_RUN_KEY, SESSION_INTERRUPTED_MESSAGE } from "./app-service-constants";
@@ -16,6 +17,7 @@ export class OrchestrationRecoveryService extends AppService<
   | "orchestration"
   | "orchestrationCoordinator"
   | "orchestrationDispatch"
+  | "orchestrationRemote"
   | "orchestrationResults"
   | "processes"
   | "runDeletion"
@@ -45,6 +47,23 @@ export class OrchestrationRecoveryService extends AppService<
     const childIds = runIds.filter((id) => id !== coordinator.id);
     const orderedRunIds = [...childIds, coordinator.id];
     try {
+      // A task on a linked host has no run here to delete. Its host run is stopped first; while the
+      // host cannot confirm, the deletion fails and stays retryable, so the host run is not orphaned.
+      const nestedOrchestrationIds = Array.isArray(impact.nestedOrchestrationIds) ? impact.nestedOrchestrationIds : [];
+      for (const id of [orchestration.id, ...nestedOrchestrationIds]) {
+        for (const task of this.db.listOrchestrationTasks(id)) {
+          // A host that is still answering start_run may be creating a run this deletion could not stop.
+          if (task.remote && this.services.orchestrationRemote.isStarting(task.id)) {
+            throw new Error(`A task is being started on ${task.remote.hostLabel}. Delete the run again in a moment.`);
+          }
+          // A host run whose pending stop could not be saved is known only in memory; once the row
+          // is deleted, nothing could save that stop any more.
+          if (task.remote) await this.services.orchestrationRemote.stopUnsavedHostRun(task.id);
+          if (task.remote?.runId && (!ORCHESTRATION_TERMINAL_TASK_STATUSES.has(task.status) || task.remote.stopPending)) {
+            await this.services.orchestrationRemote.cancelRemoteRun(task);
+          }
+        }
+      }
       for (const id of orderedRunIds) {
         await this.services.processes.stopRunOwnedProcesses(id);
       }
@@ -72,12 +91,15 @@ export class OrchestrationRecoveryService extends AppService<
       }
 
       const artifactRoot = this.services.orchestration.getOrchestrationArtifactRoot();
-      const orchestrationArtifactPath = join(artifactRoot, orchestration.id);
-      if (existsSync(orchestrationArtifactPath)) {
-        await removeOwnedOrchestrationArtifact(artifactRoot, orchestrationArtifactPath);
-      }
-      if (existsSync(orchestrationArtifactPath)) {
-        throw new Error(`An app-owned orchestration artifact directory remains: ${orchestrationArtifactPath}`);
+      const nestedIds = Array.isArray(impact.nestedOrchestrationIds) ? impact.nestedOrchestrationIds : [];
+      for (const id of [...nestedIds, orchestration.id]) {
+        const orchestrationArtifactPath = join(artifactRoot, id);
+        if (existsSync(orchestrationArtifactPath)) {
+          await removeOwnedOrchestrationArtifact(artifactRoot, orchestrationArtifactPath);
+        }
+        if (existsSync(orchestrationArtifactPath)) {
+          throw new Error(`An app-owned orchestration artifact directory remains: ${orchestrationArtifactPath}`);
+        }
       }
 
       this.db.deleteBookmarksForRunIds(runIds);
@@ -87,6 +109,7 @@ export class OrchestrationRecoveryService extends AppService<
       // Keep the orchestration journal until every owned run row is gone. A
       // startup retry can then distinguish "filesystem cleanup completed"
       // from an interruption that still requires owned-resource removal.
+      for (const id of nestedIds) this.db.deleteOrchestrationData(id);
       this.db.deleteOrchestrationData(orchestration.id);
       await this.db.flushDurable();
       this.db.completeOrchestrationCleanupJob(jobId);
@@ -122,6 +145,7 @@ export class OrchestrationRecoveryService extends AppService<
   }
 
   async reconcileOrchestrationsAfterRestart(): Promise<void> {
+    this.services.orchestrationRemote.resumeRemoteTasks();
     // Keep interrupted receipts: a provider side effect may already have happened.
     this.db.recoverInterruptedOrchestrationOperations();
     this.db.recoverOrchestrationMessageDeliveries();
@@ -268,6 +292,8 @@ export class OrchestrationRecoveryService extends AppService<
       const tasks = this.db.listOrchestrationTasks(orchestration.id);
       const reconcileTask = async (task: OrchestrationTaskRecord): Promise<void> => {
         if (!["provisioning", "queued", "running", "waiting-input"].includes(task.status)) return;
+        // Runs on a linked host, which kept running while this app was closed.
+        if (task.remote) return;
         if (!task.childRunId) {
           this.db.updateOrchestrationTask(task.id, {
             status: "pending",

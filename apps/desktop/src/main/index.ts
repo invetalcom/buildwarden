@@ -1,4 +1,6 @@
 import { isAttachmentBlobId, isAutomationScheduleKind, isSkillImportInput, isSkillSelection } from "@buildwarden/shared";
+import { configureMcpStdioRelay } from "@buildwarden/agent-runtime";
+import { OutsideAgentMcp } from "./outside-agent-mcp";
 import { startAttachmentStorageMaintenance } from "./attachment-storage-maintenance";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -61,6 +63,10 @@ import {
   type RendererLogPayload,
   type RunChatInput,
   type RunInput,
+  type AcpAgentSessionImportInput,
+  type RemoteAccessAgentToken,
+  type LinkedHostInput,
+  REMOTE_ACCESS_MCP_PATH,
   type UsageCostReportInput,
   type SubscriptionLimitsInput,
   type SubscriptionResetInput,
@@ -104,6 +110,9 @@ import {
 } from "./data-backup-service";
 
 const mainDir = dirname(fileURLToPath(import.meta.url));
+// ACP agents without HTTP MCP reach BuildWarden's tools through this stdio relay. It is this
+// executable run as Node, so it needs no separate runtime; workers inherit the setting.
+configureMcpStdioRelay({ command: process.execPath, args: [join(mainDir, "mcp-stdio-relay.js")], env: { ELECTRON_RUN_AS_NODE: "1" } });
 let mainWindow: BrowserWindow | null = null;
 /** Set once bootstrap creates the first window; links before that wait for the renderer to collect them. */
 let mainWindowBootstrapped = false;
@@ -1521,6 +1530,10 @@ const bootstrap = async (): Promise<void> => {
   remoteOperations.register("deleteProviderAccount", (providerAccountId) => controller.deleteProviderAccount(providerAccountId), validateSingleRemoteStringArg, "admin", true);
   remoteOperations.register("recheckProviderCapabilities", (providerAccountId) => controller.recheckProviderCapabilities(providerAccountId), validateSingleRemoteStringArg, "admin", true);
   remoteOperations.register("listAcpRegistryAgents", () => controller.listAcpRegistryAgents(), validateNoRemoteArgs, "admin");
+  remoteOperations.register("listAcpAgentSessions", (providerAccountId, projectId) => controller.listAcpAgentSessions(providerAccountId, projectId),
+    defineRemoteArgsValidator<"listAcpAgentSessions">((args) => args.length === 2 && args.every((value) => typeof value === "string")), "run:operate", true);
+  remoteOperations.register("importAcpAgentSession", (input) => controller.importAcpAgentSession(input),
+    defineRemoteArgsValidator<"importAcpAgentSession">((args) => args.length === 1 && hasRemoteStringFields(args[0], ["providerAccountId", "projectId", "sessionId"])), "run:operate", true);
   remoteOperations.register("deleteModel", (modelId) => controller.deleteModel(modelId), validateSingleRemoteStringArg, "admin", true);
   remoteOperations.register("getAttentionInbox", () => controller.getAttentionInbox(), validateNoRemoteArgs);
   remoteOperations.register("acknowledgeAttentionItem", (itemId) => controller.acknowledgeAttentionItem(itemId), validateSingleRemoteStringArg, "run:operate", true);
@@ -1671,6 +1684,7 @@ const bootstrap = async (): Promise<void> => {
             onBrowserInput: (runId, input) => hostBrowser.sendInput({ runId, input }),
             onBrowserSubscriptionChange: (previousRunIds, nextRunIds) => hostBrowser.setRemoteSubscriptions(previousRunIds, nextRunIds),
             resolveVisualReplyFrame: (ticket) => controller.resolveVisualReplyFrameTicket(ticket),
+            mcp: new OutsideAgentMcp(remoteOperations, { serverVersion: app.getVersion() }),
             trustedProxyHosts: () => {
               const host = tailscaleServe.getManagedHost();
               return host ? [host] : [];
@@ -1775,6 +1789,23 @@ const bootstrap = async (): Promise<void> => {
       : grant;
   };
   ipcMain.handle(IPC_CHANNELS.createRemoteAccessPairing, (_, input?: RemoteAccessPairingInput) => createRemoteAccessPairing(input));
+  // A session for an outside MCP client, issued without a pairing step: only the host's own user asks for one.
+  const createRemoteAccessAgentToken = async (input?: Pick<RemoteAccessPairingInput, "label" | "scopes">): Promise<RemoteAccessAgentToken> => {
+    if (!isRemoteAccessEnabled()) throw new Error("Enable remote access before creating an agent token.");
+    await syncRemoteAccessServer();
+    const info = remoteAccessServer?.getInfo();
+    if (!info) throw new Error("Remote access could not be started.");
+    const auth = await ensureRemoteAuthService();
+    const label = input?.label?.trim() || "Outside agent";
+    const grant = auth.createPairingGrant({ label, ...(input?.scopes ? { scopes: input.scopes } : {}) });
+    // An agent token is for the MCP tools only; the app's RPC API would let it do more than they offer.
+    const issued = auth.exchangePairingCode(grant.code, label, null, null, { audience: "mcp" });
+    if (!issued) throw new Error("The agent token could not be issued.");
+    const tailscaleStatus = await tailscaleServe.getStatus(info.port);
+    const endpoint = tailscaleStatus.verified && tailscaleStatus.endpoint ? tailscaleStatus.endpoint : info.baseUrl;
+    return { session: issued.session, token: issued.token, mcpUrl: endpoint.replace(/\/$/, "") + REMOTE_ACCESS_MCP_PATH };
+  };
+  ipcMain.handle(IPC_CHANNELS.createRemoteAccessAgentToken, (_, input?: Pick<RemoteAccessPairingInput, "label" | "scopes">) => createRemoteAccessAgentToken(input));
   ipcMain.handle(IPC_CHANNELS.listRemoteAccessSessions, () => db.listRemoteAccessSessions());
   ipcMain.handle(IPC_CHANNELS.revokeRemoteAccessSession, async (_, sessionId: string) => {
     (await ensureRemoteAuthService()).revokeSession(sessionId);
@@ -2052,6 +2083,13 @@ const bootstrap = async (): Promise<void> => {
     controller.recheckProviderCapabilities(providerAccountId),
   );
   ipcMain.handle(IPC_CHANNELS.listAcpRegistryAgents, () => controller.listAcpRegistryAgents());
+  ipcMain.handle(IPC_CHANNELS.listLinkedHosts, () => controller.listLinkedHosts());
+  ipcMain.handle(IPC_CHANNELS.saveLinkedHost, (_, input: LinkedHostInput) => controller.saveLinkedHost(input));
+  ipcMain.handle(IPC_CHANNELS.removeLinkedHost, (_, hostId: string) => controller.removeLinkedHost(hostId));
+  ipcMain.handle(IPC_CHANNELS.checkLinkedHost, (_, hostId: string) => controller.checkLinkedHost(hostId));
+  ipcMain.handle(IPC_CHANNELS.listAcpAgentSessions, (_, providerAccountId: string, projectId: string) =>
+    controller.listAcpAgentSessions(providerAccountId, projectId));
+  ipcMain.handle(IPC_CHANNELS.importAcpAgentSession, (_, input: AcpAgentSessionImportInput) => controller.importAcpAgentSession(input));
   ipcMain.handle(IPC_CHANNELS.deleteRun, (_, runId: string) => controller.deleteRun(runId));
   ipcMain.handle(IPC_CHANNELS.getModelDeletionImpact, (_, modelId: string) => controller.getModelDeletionImpact(modelId));
   ipcMain.handle(IPC_CHANNELS.deleteModel, (_, modelId: string) => controller.deleteModel(modelId));
@@ -2277,6 +2315,7 @@ const bootstrap = async (): Promise<void> => {
             getStatus: getRemoteAccessStatus,
             applyExposure: syncRemoteAccessServer,
             createPairing: createRemoteAccessPairing,
+            createAgentToken: createRemoteAccessAgentToken,
             revokeSession: async (sessionId) => (await ensureRemoteAuthService()).revokeSession(sessionId),
           },
           backup: {

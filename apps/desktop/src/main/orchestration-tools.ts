@@ -30,6 +30,7 @@ export const ORCHESTRATION_COORDINATOR_PROMPT = [
   "6. On resume, synthesize the child results, inspect details only where needed, and delegate another wave only if it adds clear value.",
   "7. BuildWarden wakes you when a child asks a question. Answer it with buildwarden_tasks_respond when the answer follows from the task or the user's instructions; otherwise ask the user first. Only the user can approve a child's shell commands.",
   "8. After buildwarden_adoption_propose, yield with mode adoption-decided if you need to verify or continue once the user has decided.",
+  "   To run a task on another machine, pass a linkedHosts id as hostId. Such a task's changes stay on that host; use it for work that must happen there or that needs no adoption.",
   "9. A rejected tool call returns { error: { code, message, retryable } }. Branch on the code: for model_unavailable choose another eligible model, for execution_option_unsupported drop or change the option, and retry unchanged only when retryable is true.",
   "</buildwarden_orchestration_policy>",
 ].join("\n");
@@ -84,6 +85,53 @@ export const buildOrchestrationAwarePrompt = (
     "<user_request>",
     prompt,
     "</user_request>",
+  ].join("\n");
+};
+
+export interface MentionableModel {
+  /** BuildWarden's model id, which buildwarden_tasks_delegate takes. */
+  id: string;
+  modelId: string;
+  displayName: string;
+  providerLabel: string;
+  providerType: string;
+}
+
+const MAX_MODEL_MENTIONS = 8;
+const mentionKey = (value: string): string => value.toLowerCase().replace(/[^a-z0-9.]+/g, "-");
+
+/**
+ * `@opus` or `@opus:claude` in the user's prompt, resolved to the team's models, so the user can
+ * name the model for delegated work without changing the run's own model. A mention that matches
+ * no model (a person, a file) is left alone; one that matches several lists them.
+ */
+export const describeModelMentions = (prompt: string, models: readonly MentionableModel[]): string | null => {
+  const lines: string[] = [];
+  const seen = new Set<string>();
+  for (const match of prompt.matchAll(/(?:^|[\s(,])@([A-Za-z0-9][\w.-]{0,59})(?::([\w.-]{1,60}))?/g)) {
+    const [, rawName = "", rawProvider] = match;
+    // A full stop or dash after a mention ends the sentence; dots inside a name (gpt-5.5) stay.
+    const trimEnd = (value: string) => value.replace(/[.-]+$/, "");
+    const name = rawProvider ? rawName : trimEnd(rawName);
+    const provider = rawProvider ? trimEnd(rawProvider) || undefined : undefined;
+    if (!name) continue;
+    const mention = `@${name}${provider ? `:${provider}` : ""}`;
+    if (seen.has(mention.toLowerCase()) || lines.length >= MAX_MODEL_MENTIONS) continue;
+    seen.add(mention.toLowerCase());
+    const key = mentionKey(name);
+    const matches = models.filter((model) =>
+      (mentionKey(model.displayName).includes(key) || mentionKey(model.modelId).includes(key)) &&
+      (!provider || mentionKey(model.providerLabel).includes(mentionKey(provider)) || mentionKey(model.providerType).includes(mentionKey(provider))));
+    const describe = (model: MentionableModel) => `"${model.id}" (${model.displayName}, ${model.providerLabel})`;
+    if (matches.length === 1) lines.push(`- ${mention}: ${describe(matches[0]!)}`);
+    else if (matches.length > 1) lines.push(`- ${mention}: ambiguous, one of ${matches.slice(0, 5).map(describe).join(", ")}`);
+  }
+  if (lines.length === 0) return null;
+  return [
+    "<model_mentions>",
+    "BuildWarden resolved the models the user named with @. Delegate the matching work to them by passing the modelId to buildwarden_tasks_delegate; the coordinator's own model stays as it is.",
+    ...lines,
+    "</model_mentions>",
   ].join("\n");
 };
 
@@ -240,6 +288,9 @@ export const ORCHESTRATION_TOOL_DEFINITIONS: RunToolDefinition[] = [
               roleId: { type: "string", minLength: 1, maxLength: 80 },
               modelId: { type: "string", minLength: 1, maxLength: 160 },
               intent: { type: "string", enum: ["inspect", "implement"] },
+              hostId: { type: "string", minLength: 1, maxLength: 200, description: "Run the task on a linked BuildWarden host from buildwarden_orchestration_get. Its changes stay there and cannot be adopted." },
+              remoteProjectId: { type: "string", minLength: 1, maxLength: 200, description: "With hostId: the host's project; default is its project with this project's name." },
+              remoteModelId: { type: "string", minLength: 1, maxLength: 200, description: "With hostId: one of the host's models; default is the host's default." },
               permissionMode: { type: "string", enum: ["inherit", "supervised"], description: "inherit (default) keeps the parent's access; supervised requires approvals even if the parent has full access. Cannot widen access." },
               executionOptions: {
                 ...objectSchema({

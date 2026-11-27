@@ -7,6 +7,7 @@ import {
   serializeRemoteAccessWebOriginsSetting,
   type NetworkProxySettingsInput,
   type NetworkProxySettingsSnapshot,
+  type RemoteAccessAgentToken,
   type RemoteAccessPairingGrant,
   type RemoteAccessPairingInput,
   type RemoteAccessScope,
@@ -34,6 +35,7 @@ export interface HostControlDependencies {
     getStatus(): Promise<RemoteAccessStatus>;
     applyExposure(): Promise<void>;
     createPairing(input: RemoteAccessPairingInput): Promise<RemoteAccessPairingGrant>;
+    createAgentToken(input: Pick<RemoteAccessPairingInput, "label" | "scopes">): Promise<RemoteAccessAgentToken>;
     revokeSession(sessionId: string): Promise<boolean>;
   };
   backup: {
@@ -92,6 +94,11 @@ export const createHostControlHandlers = (deps: HostControlDependencies): HostCo
       const clientOrigin = input?.clientOrigin === undefined ? undefined : requireOrigin(requireText(input.clientOrigin, "Origin"));
       return remote.createPairing({ scopes: requireScopes(input?.scopes), ...(clientOrigin ? { clientOrigin } : {}) });
     },
+    // Runs only, never approvals: an outside agent must not answer its own runs' requests.
+    agentToken: async (input) => remote.createAgentToken({
+      label: "Outside agent (MCP)",
+      scopes: input?.readOnly === true ? ["state:read"] : ["state:read", "run:operate"],
+    }),
     remoteExpose: async (input) => {
       if (!["local", "tailnet", "internet"].includes(input?.exposure)) throw new Error("Choose local, private or internet.");
       db.setSetting(APP_SETTING_KEYS.remoteAccessExposure, input.exposure);

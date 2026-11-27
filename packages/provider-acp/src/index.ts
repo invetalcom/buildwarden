@@ -2,7 +2,14 @@ import { createHash, randomUUID } from "node:crypto";
 import { lstat, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
-import { preflightRequiredMcpServers, startHarnessMcp, sessionInstructionPrompt } from "@buildwarden/agent-runtime";
+import {
+  acpStdioRelayServer,
+  preflightRequiredMcpServers,
+  resolveMcpStdioRelayLaunch,
+  sessionInstructionPrompt,
+  startHarnessMcp,
+  type McpStdioRelayLaunch,
+} from "@buildwarden/agent-runtime";
 import {
   ACP_DEFAULT_MODEL_ID,
   acpToolApprovalKey,
@@ -25,12 +32,21 @@ import {
   type RunExecutionRequest,
   type ApprovalRequester,
   type RunTokenUsage,
+  type RunUserInputAnswers,
+  type RunUserInputRequest,
 } from "@buildwarden/shared";
 import { AcpConnection, AcpRequestError, parseAcpEnvironment, resolveAcpLaunch, type AcpLaunch } from "./connection";
 
 export { AcpConnection, AcpRequestError, parseAcpCommandLine, parseAcpEnvironment, resolveAcpLaunch } from "./connection";
 
-import { AcpSessionSettings, isAcpInspectMode } from "./session-settings";
+import { AcpSessionSettings } from "./session-settings";
+import { AcpTerminals, type AcpTerminalSnapshot } from "./terminals";
+import { readElicitationForm } from "./elicitation";
+import { applyAcpSessionSettings } from "./session-apply";
+
+export { readElicitationForm } from "./elicitation";
+
+export { AcpTerminals, findCmdOperator, terminalCommandLine, terminalCommandLineWithEnv } from "./terminals";
 
 export { ACP_DEFAULT_MODEL_ID };
 const ACP_PROTOCOL_VERSION = 1;
@@ -53,6 +69,12 @@ export const resolveAcpConfig = (config: Record<string, unknown> | undefined): A
 interface AcpAgentCapabilities {
   authMethods: Array<{ id: string; name: string }>;
   loadSession: boolean;
+  /** `session/resume`: reopens a session without replaying it. */
+  resumeSession: boolean;
+  /** `session/fork` (unstable in ACP): a new session that starts with a copy of another's history. */
+  forkSession: boolean;
+  /** `session/list`: the sessions the agent saved, so they can be imported. */
+  listSessions: boolean;
   mcpHttp: boolean;
   promptImages: boolean;
   agentName?: string;
@@ -64,12 +86,17 @@ const readAgentCapabilities = (initialization: unknown): AcpAgentCapabilities =>
   const capabilities = isRecord(result.agentCapabilities) ? result.agentCapabilities : {};
   const mcp = isRecord(capabilities.mcpCapabilities) ? capabilities.mcpCapabilities : {};
   const prompt = isRecord(capabilities.promptCapabilities) ? capabilities.promptCapabilities : {};
+  // ACP advertises these as objects; omitted or null means unsupported.
+  const session = isRecord(capabilities.sessionCapabilities) ? capabilities.sessionCapabilities : {};
   const info = isRecord(result.agentInfo) ? result.agentInfo : {};
   return {
     authMethods: Array.isArray(result.authMethods) ? result.authMethods.filter(isRecord).flatMap((method) =>
       typeof method.id === "string" && typeof method.name === "string" && (method.type === undefined || method.type === "agent")
         ? [{ id: method.id, name: method.name }] : []) : [],
     loadSession: capabilities.loadSession === true,
+    resumeSession: isRecord(session.resume),
+    forkSession: isRecord(session.fork),
+    listSessions: isRecord(session.list),
     mcpHttp: mcp.http === true,
     promptImages: prompt.image === true,
     ...(asString(info.title) ?? asString(info.name) ? { agentName: asString(info.title) ?? asString(info.name) } : {}),
@@ -77,21 +104,35 @@ const readAgentCapabilities = (initialization: unknown): AcpAgentCapabilities =>
   };
 };
 
-/** The session capability report BuildWarden keeps for the agent's provider. */
-const acpSessionCapabilities = (agent: AcpAgentCapabilities): HarnessSessionCapabilities => ({
+/**
+ * The session capability report BuildWarden keeps for the agent's provider. `mcpHttp` says whether
+ * the agent reaches BuildWarden's HTTP MCP servers, natively or through the stdio relay.
+ */
+const acpSessionCapabilities = (agent: AcpAgentCapabilities, stdioRelay = false): HarnessSessionCapabilities => ({
   reportedAt: new Date().toISOString(),
   ...(agent.agentName ? { agentName: agent.agentName } : {}),
   ...(agent.agentVersion ? { agentVersion: agent.agentVersion } : {}),
-  mcpHttp: agent.mcpHttp,
-  sessionResume: agent.loadSession,
+  mcpHttp: agent.mcpHttp || stdioRelay,
+  sessionResume: agent.loadSession || agent.resumeSession,
+  sessionFork: agent.forkSession,
+  sessionList: agent.listSessions,
   authMethods: agent.authMethods,
 });
 
 /** Advertises only the file access this connection serves; the agent relies on what it is told. */
-const initializeAgent = async (connection: AcpConnection, access: { read: boolean; write: boolean }, config?: Record<string, unknown>) => {
+const initializeAgent = async (
+  connection: AcpConnection,
+  access: { read: boolean; write: boolean; terminal?: boolean; elicitation?: boolean },
+  config?: Record<string, unknown>,
+) => {
   const initialized = await connection.request("initialize", {
   protocolVersion: ACP_PROTOCOL_VERSION,
-  clientCapabilities: { fs: { readTextFile: access.read, writeTextFile: access.write }, terminal: false },
+  clientCapabilities: {
+    fs: { readTextFile: access.read, writeTextFile: access.write },
+    terminal: access.terminal === true,
+    // Form elicitation only: BuildWarden opens no links on an agent's behalf.
+    ...(access.elicitation ? { elicitation: { form: {} } } : {}),
+  },
   clientInfo: { name: "buildwarden", title: "BuildWarden", version: "1.0.0" },
 }, ACP_INITIALIZE_TIMEOUT_MS);
   const methodId = config?.[PROVIDER_CONFIG_ACP_AUTH_METHOD_KEY];
@@ -217,11 +258,34 @@ const toolCallApprovalIdentity = (toolCall: Record<string, unknown>): string | n
   return `${describeToolCall(toolCall)} #${createHash("sha256").update(stableJson(rawInput)).digest("hex").slice(0, 16)}`;
 };
 
-const toolContentText = (content: unknown): string => {
+/** Terminal output shown in a tool step; the agent receives the whole buffer through terminal/output. */
+const MAX_TERMINAL_STEP_CHARS = 16_000;
+
+const terminalStepText = (terminal: AcpTerminalSnapshot): string => {
+  const output = terminal.output.length > MAX_TERMINAL_STEP_CHARS
+    ? `…${terminal.output.slice(-MAX_TERMINAL_STEP_CHARS)}`
+    : terminal.output;
+  const status = terminal.exitStatus
+    ? `\n[exit ${terminal.exitStatus.exitCode ?? terminal.exitStatus.signal ?? "?"}]`
+    : "";
+  return `$ ${terminal.commandLine}\n${output.trimEnd() || "(waiting for output…)"}${status}`;
+};
+
+/** The terminals a tool call's content embeds. */
+const toolTerminalIds = (content: unknown): string[] =>
+  Array.isArray(content)
+    ? content.filter(isRecord).flatMap((entry) => (entry.type === "terminal" && typeof entry.terminalId === "string" ? [entry.terminalId] : []))
+    : [];
+
+const toolContentText = (content: unknown, terminal?: (terminalId: string) => AcpTerminalSnapshot | null): string => {
   if (!Array.isArray(content)) return "";
   return content.filter(isRecord).map((entry) => {
     if (entry.type === "content" && isRecord(entry.content) && typeof entry.content.text === "string") return entry.content.text;
     if (entry.type === "diff" && typeof entry.path === "string") return `Edited ${entry.path}`;
+    if (entry.type === "terminal" && typeof entry.terminalId === "string") {
+      const snapshot = terminal?.(entry.terminalId);
+      return snapshot ? terminalStepText(snapshot) : "";
+    }
     return "";
   }).filter(Boolean).join("\n");
 };
@@ -300,13 +364,79 @@ class BridgeCallLedger {
   }
 }
 
+export interface AcpHarnessOptions {
+  /** How to start the stdio MCP relay; read from the environment by default. */
+  resolveStdioRelay?: () => McpStdioRelayLaunch | null;
+  /**
+   * BuildWarden's shell policy (operators, allowlist, approval) for commands the agent runs in
+   * BuildWarden's terminals. Throws when a command may not run. Without it, every command needs
+   * the user's approval.
+   */
+  authorizeShellCommand?: (commandLine: string, options: { yoloMode: boolean }) => Promise<void>;
+  /** The environment terminals start with. */
+  shellEnv?: NodeJS.ProcessEnv;
+  /** Asks the user the questions of an agent's form elicitation. Without it, BuildWarden advertises none. */
+  requestUserInput?: (request: RunUserInputRequest) => Promise<RunUserInputAnswers>;
+}
+
+/** The command of an execute call BuildWarden approved: as the user saw it, and as separate words when the agent sent them so. */
+interface ApprovedCommand { text: string; argv: string[] | null }
+
+const approvedCommandOf = (toolCall: Record<string, unknown>): ApprovedCommand | null => {
+  const rawInput = isRecord(toolCall.rawInput) ? toolCall.rawInput : {};
+  if (Array.isArray(rawInput.command) && rawInput.command.length > 0 && rawInput.command.every((word) => typeof word === "string")) {
+    const argv = rawInput.command as string[];
+    return { text: argv.join(" "), argv };
+  }
+  const text = asString(rawInput.command)?.trim();
+  return text ? { text, argv: null } : null;
+};
+
+/** Words joined with spaces read back the same only when no word holds whitespace. */
+const joinsUnambiguously = (words: readonly string[]): boolean => words.every((word) => word.length > 0 && !/\s/.test(word));
+
+/**
+ * Whether a terminal request runs exactly the command the user approved. Shell source compares as
+ * text, exactly: spacing inside quotes changes what runs. An executable with arguments compares
+ * word by word, or with the line BuildWarden shows for it, or with its words joined as the agent
+ * showed them when that joining cannot hide an argument boundary.
+ */
+const runsApprovedCommand = (approved: ApprovedCommand, commandLine: string, request: { command: string; args: string[] }): boolean => {
+  if (request.args.length === 0) {
+    const source = request.command.trim();
+    return approved.argv ? joinsUnambiguously(approved.argv) && approved.text === source : approved.text === source;
+  }
+  const argv = [request.command, ...request.args];
+  if (approved.argv) return approved.argv.length === argv.length && approved.argv.every((word, index) => word === argv[index]);
+  return approved.text === commandLine.trim() || (joinsUnambiguously(argv) && approved.text === argv.join(" "));
+};
+
 const fallbackContextBlock = (context: string) =>
   `<earlier_conversation>\nThe agent could not reload its saved session, so this is the conversation so far.\n${context}\n</earlier_conversation>`;
 
 export class AcpHarnessAdapter implements HarnessAdapter {
   readonly harnessType = "acp" as const;
 
-  constructor(private readonly requestShellApproval?: ApprovalRequester) {}
+  private readonly resolveStdioRelay: () => McpStdioRelayLaunch | null;
+
+  constructor(
+    private readonly requestShellApproval?: ApprovalRequester,
+    private readonly options: AcpHarnessOptions = {},
+  ) {
+    this.resolveStdioRelay = options.resolveStdioRelay ?? resolveMcpStdioRelayLaunch;
+  }
+
+  /** BuildWarden's shell policy for a command the agent runs in one of BuildWarden's terminals. */
+  private async authorizeCommand(commandLine: string, yoloMode: boolean): Promise<void> {
+    if (this.options.authorizeShellCommand) {
+      await this.options.authorizeShellCommand(commandLine, { yoloMode });
+      return;
+    }
+    if (yoloMode) return;
+    if (!this.requestShellApproval || await this.requestShellApproval(commandLine) === "deny") {
+      throw new Error(`Command was denied by the user: ${commandLine}`);
+    }
+  }
 
   async run(
     input: RunExecutionRequest,
@@ -341,6 +471,40 @@ export class AcpHarnessAdapter implements HarnessAdapter {
     const bridgeCalls = new BridgeCallLedger();
     /** Calls titled as BuildWarden tools that ran, but that the bridge has not vouched for yet. */
     const unverifiedBridgeCalls = new Map<string, { toolName: string; state: Record<string, unknown> }>();
+    // Full Access never reaches past an inspect-only turn: its commands keep the allowlist and approvals.
+    const shellYolo = input.yoloMode === true && writable;
+    /** Commands of execute calls BuildWarden approved this turn; the terminal that runs one is not asked about again. */
+    const approvedCommands: ApprovedCommand[] = [];
+    /** Each BuildWarden terminal and the tool call that shows it. */
+    const terminalToolCalls = new Map<string, string>();
+    const toolEmitTimers = new Map<string, ReturnType<typeof setTimeout>>();
+    let emitToolChunk: (id: string) => void = () => undefined;
+    const scheduleToolEmit = (id: string) => {
+      if (toolEmitTimers.has(id)) return;
+      toolEmitTimers.set(id, setTimeout(() => {
+        toolEmitTimers.delete(id);
+        emitToolChunk(id);
+      }, 150));
+    };
+    const terminals = new AcpTerminals({
+      workspace: input.worktreePath,
+      resolveCwd: (requested) => resolveWorkspacePath(input.worktreePath, requested),
+      ...(this.options.shellEnv ? { env: this.options.shellEnv } : {}),
+      allowShellOperators: shellYolo,
+      authorize: async (commandLine, request) => {
+        // The user approved the command, not variables the agent adds when it starts it.
+        const approved = Object.keys(request.env).length > 0 ? -1 : approvedCommands.findIndex((command) => runsApprovedCommand(command, commandLine, request));
+        if (approved >= 0) {
+          approvedCommands.splice(approved, 1);
+          return;
+        }
+        await this.authorizeCommand(commandLine, shellYolo);
+      },
+      onOutput: (terminalId) => {
+        const toolCallId = terminalToolCalls.get(terminalId);
+        if (toolCallId) scheduleToolEmit(toolCallId);
+      },
+    });
     const readOnlyViolationMessage = (toolCall: Record<string, unknown>) =>
       `The ACP agent ran "${describeToolCall(toolCall)}" without BuildWarden's permission in an inspect-only turn. BuildWarden stopped the turn; configure the agent to ask before edits, commands and MCP tools.`;
     let cancelTimer: ReturnType<typeof setTimeout> | undefined;
@@ -361,25 +525,38 @@ export class AcpHarnessAdapter implements HarnessAdapter {
     try {
       signal.throwIfAborted();
       connection.start();
-      const agent = readAgentCapabilities(await initializeAgent(connection, { read: true, write: writable }, input.config));
+      const requestUserInput = this.options.requestUserInput;
+      const agent = readAgentCapabilities(await initializeAgent(connection, {
+        read: true, write: writable, terminal: true, elicitation: Boolean(requestUserInput),
+      }, input.config));
+      // Read once, so the reported support and the transport chosen below agree.
+      const stdioRelay = this.resolveStdioRelay();
       onChunk({
         type: "status",
         title: "ACP session capabilities",
         value: `${agent.agentName ?? "ACP agent"}${agent.agentVersion ? ` ${agent.agentVersion}` : ""} connected.`,
-        metadata: { silent: true, sessionCapabilities: acpSessionCapabilities(agent) },
+        metadata: { silent: true, sessionCapabilities: acpSessionCapabilities(agent, Boolean(stdioRelay)) },
       });
 
       const mcpServers: Array<Record<string, unknown>> = [];
       const wantsMcp = toolContext.tools.some((tool) => tool.name.startsWith("buildwarden_")) || Boolean(input.mcpServers?.length);
-      if (agent.mcpHttp) {
+      // ACP requires stdio MCP support and leaves HTTP optional, so an agent without HTTP gets
+      // the same servers through BuildWarden's stdio relay.
+      const relay = agent.mcpHttp ? null : stdioRelay;
+      if (wantsMcp && (agent.mcpHttp || relay)) {
         // The agent connects to project servers itself and reports nothing back, so a required
         // server is checked from here before the session starts.
         await preflightRequiredMcpServers(input.mcpServers ?? [], { signal });
         bridge = await startHarnessMcp(toolContext, (toolName) => bridgeCalls.received(toolName));
         if (bridge) bridgeToolNames = toolContext.tools.map((tool) => tool.name).filter((name) => name.startsWith("buildwarden_"));
-        if (bridge) mcpServers.push({ type: "http", name: bridgeServerName, url: bridge.url, headers: httpHeaders(bridge.headers) });
-        for (const server of input.mcpServers ?? []) {
-          mcpServers.push({ type: "http", name: server.name, url: server.url, headers: httpHeaders(server.headers) });
+        const servers = [
+          ...(bridge ? [{ name: bridgeServerName, url: bridge.url, headers: bridge.headers }] : []),
+          ...(input.mcpServers ?? []).map((server) => ({ name: server.name, url: server.url, headers: server.headers })),
+        ];
+        for (const server of servers) {
+          mcpServers.push(relay
+            ? { ...acpStdioRelayServer(relay, server.name, server) }
+            : { type: "http", name: server.name, url: server.url, headers: httpHeaders(server.headers) });
         }
       } else if (wantsMcp) {
         const required = (input.mcpServers ?? []).filter((server) => server.required === true).map((server) => server.name);
@@ -410,6 +587,22 @@ export class AcpHarnessAdapter implements HarnessAdapter {
             const allowOnce = pickPermissionOption(params, ["allow_once"]);
             if (allowOnce) return permissionOutcome(allowOnce);
           }
+          // A command gets the same shell policy as run_shell in an inspect turn: allowlisted
+          // commands run, others need the user's approval.
+          const command = kind === "execute" ? toolCallCommand(merged) : undefined;
+          const allowOnce = pickPermissionOption(params, ["allow_once"]);
+          if (command && allowOnce && toolCallId) {
+            try {
+              await this.authorizeCommand(command, false);
+            } catch {
+              return permissionOutcome(pickPermissionOption(params, ["reject_once", "reject_always"]));
+            }
+            if (signal.aborted) return permissionOutcome(undefined);
+            grantedToolCalls.add(toolCallId);
+            const approvedCommand = approvedCommandOf(merged);
+            if (approvedCommand) approvedCommands.push(approvedCommand);
+            return permissionOutcome(allowOnce);
+          }
           return permissionOutcome(pickPermissionOption(params, ["reject_once", "reject_always"]));
         }
         const description = describeToolCall(merged);
@@ -427,6 +620,8 @@ export class AcpHarnessAdapter implements HarnessAdapter {
         }
         const allow = () => {
           if (toolCallId) grantedToolCalls.add(toolCallId);
+          const approvedCommand = kind === "execute" ? approvedCommandOf(merged) : null;
+          if (approvedCommand) approvedCommands.push(approvedCommand);
           return permissionOutcome(allowOnce);
         };
         if (input.yoloMode === true) return allow();
@@ -458,6 +653,39 @@ export class AcpHarnessAdapter implements HarnessAdapter {
         await writeFile(target, params.content, "utf8");
         return null;
       });
+      if (requestUserInput) {
+        const elicit = async (raw: unknown) => {
+          const form = readElicitationForm(raw);
+          if (!form) throw new Error("BuildWarden cannot show this form; ask in the conversation instead.");
+          if (signal.aborted) return { action: "cancel" };
+          try {
+            return form.respond(await requestUserInput(form.request));
+          } catch {
+            // The user dismissed the question, or the turn stopped.
+            return { action: "cancel" };
+          }
+        };
+        // ACP v1 named the request session/elicitation; later drafts call it elicitation/create.
+        connection.handleRequest("session/elicitation", elicit);
+        connection.handleRequest("elicitation/create", elicit);
+      }
+      connection.handleRequest("terminal/create", (raw) => terminals.create(raw));
+      connection.handleRequest("terminal/output", (raw) => terminals.output(raw));
+      connection.handleRequest("terminal/wait_for_exit", (raw) => terminals.waitForExit(raw));
+      connection.handleRequest("terminal/kill", (raw) => terminals.kill(raw));
+      connection.handleRequest("terminal/release", (raw) => terminals.release(raw));
+      emitToolChunk = (id) => {
+        const state = tools.get(id);
+        if (!state || replaying) return;
+        const status = asString(state.status) ?? "pending";
+        const finished = status === "completed" || status === "failed";
+        onChunk({
+          type: finished ? "tool-result" : "tool-progress",
+          title: `Tool: ${asString(state.title) ?? asString(state.kind) ?? "tool"}`,
+          value: toolContentText(state.content, (terminalId) => terminals.snapshot(terminalId)) || describeToolCall(state),
+          metadata: { provider: "acp", toolName: asString(state.kind) ?? "tool", callId: id, ok: status !== "failed", streamId: `acp-tool-${id}`, replace: true },
+        });
+      };
       connection.handleNotification("session/update", (raw) => {
         if (!isRecord(raw) || !isRecord(raw.update)) return;
         const update = raw.update;
@@ -507,6 +735,19 @@ export class AcpHarnessAdapter implements HarnessAdapter {
             }
             const status = asString(state.status) ?? "pending";
             const toolKind = asString(state.kind) ?? "other";
+            for (const terminalId of toolTerminalIds(state.content)) {
+              const terminal = terminals.snapshot(terminalId);
+              if (!terminal) continue;
+              // A terminal belongs to the first call that shows it; another call can show its
+              // output but cannot borrow its approval.
+              const owner = terminalToolCalls.get(terminalId);
+              if (owner === undefined) terminalToolCalls.set(terminalId, id);
+              else if (owner !== id) continue;
+              // BuildWarden's shell policy let this terminal's command start. The call is approved
+              // with it, unless it names another command than the one that runs.
+              const shown = approvedCommandOf(state);
+              if (toolKind === "execute" && (!shown || runsApprovedCommand(shown, terminal.commandLine, terminal.request))) grantedToolCalls.add(id);
+            }
             if (!writable && !readOnlyViolation && !INSPECT_TOOL_KINDS.has(toolKind) && !grantedToolCalls.has(id)) {
               // The agent ran a tool this turn rejects without BuildWarden's approval: it skipped
               // the permission prompt, or went ahead after a rejection. Stop the turn, and close
@@ -533,13 +774,7 @@ export class AcpHarnessAdapter implements HarnessAdapter {
                 unverifiedBridgeCalls.delete(id);
               }
             }
-            const finished = status === "completed" || status === "failed";
-            onChunk({
-              type: finished ? "tool-result" : "tool-progress",
-              title: `Tool: ${asString(state.title) ?? asString(state.kind) ?? "tool"}`,
-              value: toolContentText(state.content) || describeToolCall(state),
-              metadata: { provider: "acp", toolName: asString(state.kind) ?? "tool", callId: id, ok: status !== "failed", streamId: `acp-tool-${id}`, replace: true },
-            });
+            emitToolChunk(id);
             return;
           }
           case "plan": {
@@ -560,25 +795,83 @@ export class AcpHarnessAdapter implements HarnessAdapter {
         }
       });
 
-      const previousSessionId = asString(input.providerSessionRuntime?.resumeCursor?.sessionId);
+      const resumeCursor = input.providerSessionRuntime?.resumeCursor;
+      const previousSessionId = asString(resumeCursor?.sessionId);
+      // A forked run starts from a copy of its source run's session (see the run fork service).
+      const forkFromSessionId = previousSessionId ? undefined : asString(resumeCursor?.forkFromSessionId);
+      const fallbackNote = input.resumeFallbackContext ? " The earlier conversation is sent with this turn." : "";
       let sessionState: unknown;
-      let resumeFailed = Boolean(previousSessionId) && !agent.loadSession;
-      if (previousSessionId && agent.loadSession) {
-        // Loading replays the saved transcript as updates; the run already has those steps.
-        replaying = true;
-        settingsSessionId = previousSessionId;
-        try {
-          sessionState = await connection.request("session/load", { sessionId: previousSessionId, cwd: input.worktreePath, mcpServers }, ACP_SESSION_LOAD_TIMEOUT_MS);
-          sessionId = previousSessionId;
-        } catch (error) {
-          settingsSessionId = null;
+      /** The session holds the conversation so far: it was reopened or forked. */
+      let continued = false;
+      let resumeFailed = false;
+      /** Newer settings arrived after the response that `sessionState` is. */
+      let snapshotStale = false;
+      if (forkFromSessionId) {
+        if (agent.forkSession) {
+          try {
+            const forked = await connection.request("session/fork", { sessionId: forkFromSessionId, cwd: input.worktreePath, mcpServers }, ACP_SESSION_LOAD_TIMEOUT_MS);
+            const forkedId = isRecord(forked) ? asString(forked.sessionId) : undefined;
+            if (!forkedId) throw new Error("the agent returned no session id");
+            sessionState = forked;
+            sessionId = forkedId;
+            settingsSessionId = forkedId;
+            continued = true;
+            onChunk({ type: "status", title: "ACP session", value: "Forked the agent's session from the source run." });
+          } catch (error) {
+            resumeFailed = true;
+            onChunk({
+              type: "status", title: "ACP session",
+              value: `Started a new session; the agent could not fork the source run's session (${error instanceof Error ? error.message : String(error)}).${fallbackNote}`,
+            });
+          }
+        } else {
           resumeFailed = true;
-          onChunk({
-            type: "status", title: "ACP session",
-            value: `Started a new session; the agent could not reload the previous one (${error instanceof Error ? error.message : String(error)}).${input.resumeFallbackContext ? " The earlier conversation is sent with this turn." : ""}`,
-          });
-        } finally {
-          replaying = false;
+          onChunk({ type: "status", title: "ACP session", value: `Started a new session; this agent cannot fork sessions.${fallbackNote}` });
+        }
+      } else if (previousSessionId) {
+        const failures: string[] = [];
+        const describe = (error: unknown) => (error instanceof Error ? error.message : String(error));
+        if (agent.resumeSession) {
+          // Resuming reopens the session without replaying it.
+          settingsSessionId = previousSessionId;
+          let settingsAtAnswer = -1;
+          try {
+            sessionState = await connection.request("session/resume", { sessionId: previousSessionId, cwd: input.worktreePath, mcpServers },
+              ACP_SESSION_LOAD_TIMEOUT_MS, { onAnswer: () => { settingsAtAnswer = settings.version; } });
+            // A config_option_update read after the answer, in the same batch, is handled before this
+            // continuation runs; it is newer than the answer, so the answer must not replace it.
+            snapshotStale = settings.version !== settingsAtAnswer;
+            sessionId = previousSessionId;
+            continued = true;
+          } catch (error) {
+            settingsSessionId = null;
+            failures.push(`resume: ${describe(error)}`);
+          }
+        }
+        // An agent that cannot resume this session may still be able to load it.
+        if (!sessionId && agent.loadSession) {
+          // Loading replays the saved transcript as updates; the run already has those steps.
+          replaying = true;
+          settingsSessionId = previousSessionId;
+          try {
+            sessionState = await connection.request("session/load", { sessionId: previousSessionId, cwd: input.worktreePath, mcpServers }, ACP_SESSION_LOAD_TIMEOUT_MS);
+            sessionId = previousSessionId;
+            continued = true;
+          } catch (error) {
+            settingsSessionId = null;
+            failures.push(`reload: ${describe(error)}`);
+          } finally {
+            replaying = false;
+          }
+        }
+        if (!sessionId) {
+          resumeFailed = true;
+          if (failures.length > 0) {
+            onChunk({
+              type: "status", title: "ACP session",
+              value: `Started a new session; the agent could not continue the previous one (${failures.join("; ")}).${fallbackNote}`,
+            });
+          }
         }
       }
       if (!sessionId) {
@@ -593,7 +886,7 @@ export class AcpHarnessAdapter implements HarnessAdapter {
         if (!sessionId) throw new Error("The ACP agent did not return a session id.");
         settingsSessionId = sessionId;
       }
-      const readOnlyMode = await this.applySessionSettings(connection, sessionId, sessionState, input, settings);
+      const readOnlyMode = await applyAcpSessionSettings(connection, sessionId, sessionState, input, settings, { snapshotStale });
       const selectedModel = settings.currentModel;
       const selectedMode = settings.selector("mode")?.currentValue;
       await settings.configure(input.config?.[PROVIDER_CONFIG_ACP_SESSION_OPTIONS_KEY],
@@ -614,11 +907,11 @@ export class AcpHarnessAdapter implements HarnessAdapter {
         }
         onChunk({
           type: "error", title: "ACP agent",
-          value: "This agent offers no read-only mode. BuildWarden rejects edit and command permissions in this turn and stops it if the agent runs one anyway.",
+          value: "This agent offers no read-only mode. BuildWarden rejects edit permissions in this turn, lets commands run only as the shell policy and your approvals allow, and stops the turn if the agent acts without permission.",
         });
       }
       onChunk({
-        type: "status", title: "ACP session", value: previousSessionId === sessionId ? "ACP session resumed." : "ACP session ready.",
+        type: "status", title: "ACP session", value: continued && previousSessionId === sessionId ? "ACP session resumed." : "ACP session ready.",
         metadata: {
           silent: true,
           providerSessionRuntime: {
@@ -630,7 +923,7 @@ export class AcpHarnessAdapter implements HarnessAdapter {
       signal.throwIfAborted();
       const policy = sessionInstructionPrompt({ prompt: input.prompt,
         instructions: [RESPONSE_PRESENTATION_INSTRUCTIONS, input.instructions?.trim()].filter(Boolean).join("\n\n"),
-        resumed: Boolean(previousSessionId) && !resumeFailed && sessionId === previousSessionId,
+        resumed: continued,
         previousHash: input.providerSessionRuntime?.runtimePayload?.coordinatorPolicyHash,
         // A fresh session after a failed resume gets the conversation in front of the prompt.
         nativeCommand: input.nativeCommand === true && !resumeFailed });
@@ -683,69 +976,15 @@ export class AcpHarnessAdapter implements HarnessAdapter {
             ok: false, streamId: `acp-tool-${id}`, replace: true, endedReason: signal.aborted ? "cancelled" : "turn-ended" },
         });
       }
+      for (const timer of toolEmitTimers.values()) clearTimeout(timer);
+      toolEmitTimers.clear();
+      emitToolChunk = () => undefined;
+      await terminals.closeAll().catch(() => undefined);
       await bridge?.close().catch(() => undefined);
       // A cancelled turn stops everything it started, and so does one stopped for running a
       // command without permission; only a turn that finished normally leaves its servers running.
       await connection.close({ scope: signal.aborted || readOnlyViolation ? "tree" : "agent" });
     }
-  }
-
-  /**
-   * Reconciles model and mode on both new and resumed sessions before sending the prompt.
-   * Returns whether a read-only mode is now selected.
-   */
-  private async applySessionSettings(connection: AcpConnection, sessionId: string, created: unknown, input: RunExecutionRequest, settings: AcpSessionSettings): Promise<boolean> {
-    settings.update(created);
-    const select = (kind: "model" | "mode", value: string) => settings.select(kind, value,
-      (configId, selected) => connection.request("session/set_config_option", { sessionId, configId, value: selected }));
-    if (input.modelId && input.modelId !== ACP_DEFAULT_MODEL_ID) {
-      if (settings.selector("model")) await select("model", input.modelId);
-      else {
-        try {
-          await connection.request("session/set_model", { sessionId, modelId: input.modelId });
-        } catch (error) {
-          throw new Error(`The ACP agent could not select model ${input.modelId}: ${error instanceof Error ? error.message : String(error)}`);
-        }
-      }
-    }
-    if (settings.selector("mode")) {
-      const mode = settings.selector("mode");
-      const current = mode?.options.find((option) => option.value === mode.currentValue);
-      const inspect = (option: { value: string; name: string }) => isAcpInspectMode(option.value, option.name);
-      const selected = input.mode === "code"
-        ? (current && !inspect(current) ? current : mode?.options.find((option) => /^(default|normal|code|build)$/i.test(option.value)))
-        : mode?.options.find(inspect);
-      if (!selected) {
-        if (input.mode === "code" && current && inspect(current)) throw new Error("The ACP session is read-only and offers no recognized code mode.");
-        return false;
-      }
-      await select("mode", selected.value);
-      return input.mode !== "code";
-    }
-    if (!isRecord(created) || !isRecord(created.modes)) return false;
-    const modeState = created.modes;
-    const modes = Array.isArray(modeState.availableModes) ? modeState.availableModes.filter(isRecord) : [];
-    const isInspectMode = (mode: Record<string, unknown>) => isAcpInspectMode(String(mode.id), String(mode.name ?? ""));
-    const current = modes.find((mode) => mode.id === modeState.currentModeId);
-    // A code follow-up must leave the read-only mode selected on the previous turn. Prefer
-    // ordinary code modes; never select a permission-bypass mode merely because it is writable.
-    const selected = input.mode === "code"
-      ? (current && !isInspectMode(current) ? current : modes.find((mode) => /^(default|normal|code|build)$/i.test(String(mode.id))))
-      : modes.find(isInspectMode);
-    if (typeof selected?.id !== "string") {
-      if (input.mode === "code" && current && isInspectMode(current)) {
-        throw new Error("The ACP session is read-only and offers no recognized code mode. Start a new session or configure the agent's mode.");
-      }
-      return false;
-    }
-    if (selected.id !== modeState.currentModeId) {
-      try {
-        await connection.request("session/set_mode", { sessionId, modeId: selected.id });
-      } catch (error) {
-        throw new Error(`The ACP agent could not select mode ${selected.id}: ${error instanceof Error ? error.message : String(error)}`);
-      }
-    }
-    return input.mode !== "code";
   }
 }
 
@@ -761,7 +1000,7 @@ export class AcpProviderAdapter implements ProviderAdapter {
     const connection = new AcpConnection(resolveAcpConfig(context.config), tmpdir());
     try {
       connection.start();
-      return acpSessionCapabilities(readAgentCapabilities(await initializeAgent(connection, { read: true, write: true })));
+      return acpSessionCapabilities(readAgentCapabilities(await initializeAgent(connection, { read: true, write: true })), Boolean(resolveMcpStdioRelayLaunch()));
     } catch (error) {
       throw new Error(`Could not start the ACP agent: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
@@ -861,6 +1100,104 @@ export async function generateUtilityTextWithAcp(input: {
   } finally {
     clearTimeout(timeout);
     signal.removeEventListener("abort", onAbort);
+    await connection.close();
+  }
+}
+
+/** A session an ACP agent saved, as `session/list` reports it. */
+export interface AcpListedSession {
+  sessionId: string;
+  cwd: string;
+  title: string | null;
+  updatedAt: string | null;
+}
+
+const ACP_LIST_MAX_PAGES = 10;
+const ACP_LIST_MAX_SESSIONS = 200;
+const ACP_LIST_MAX_SESSION_ID_LENGTH = 500;
+
+/**
+ * The sessions the agent saved for `cwd`, in the agent's order. Returns `supported: false` when
+ * the agent does not advertise `session/list`.
+ */
+export async function listAcpSessions(input: { cwd: string; config?: Record<string, unknown> }): Promise<{ supported: boolean; sessions: AcpListedSession[] }> {
+  const connection = new AcpConnection(resolveAcpConfig(input.config), input.cwd);
+  try {
+    connection.start();
+    const agent = readAgentCapabilities(await initializeAgent(connection, { read: false, write: false }, input.config));
+    if (!agent.listSessions) return { supported: false, sessions: [] };
+    const sessions: AcpListedSession[] = [];
+    let cursor: string | undefined;
+    for (let page = 0; page < ACP_LIST_MAX_PAGES && sessions.length < ACP_LIST_MAX_SESSIONS; page += 1) {
+      const listed = await connection.request("session/list", { cwd: input.cwd, ...(cursor ? { cursor } : {}) }, ACP_INITIALIZE_TIMEOUT_MS);
+      for (const entry of isRecord(listed) && Array.isArray(listed.sessions) ? listed.sessions.filter(isRecord) : []) {
+        const sessionId = asString(entry.sessionId);
+        // A shortened id would name another session, or none; an id this long is left out instead.
+        if (!sessionId || sessionId.length > ACP_LIST_MAX_SESSION_ID_LENGTH) continue;
+        sessions.push({
+          sessionId,
+          cwd: asString(entry.cwd) ?? input.cwd,
+          title: asString(entry.title)?.slice(0, 300) ?? null,
+          updatedAt: asString(entry.updatedAt) ?? null,
+        });
+      }
+      cursor = isRecord(listed) ? asString(listed.nextCursor) : undefined;
+      if (!cursor) break;
+    }
+    return { supported: true, sessions: sessions.slice(0, ACP_LIST_MAX_SESSIONS) };
+  } finally {
+    await connection.close();
+  }
+}
+
+/** One message of a saved ACP session, as its replay reports it. */
+export interface AcpTranscriptMessage {
+  role: "user" | "assistant";
+  text: string;
+}
+
+const ACP_TRANSCRIPT_MAX_CHARS = 2_000_000;
+
+/**
+ * Reloads a saved session to read its conversation: `session/load` replays the transcript as
+ * updates, of which the user's and the agent's messages are kept. Permission requests are refused
+ * and no file access is advertised, so the replay cannot act. Returns `loaded: false` when the
+ * agent cannot reload sessions.
+ */
+export async function readAcpSessionTranscript(input: { cwd: string; sessionId: string; config?: Record<string, unknown> }): Promise<{ loaded: boolean; messages: AcpTranscriptMessage[] }> {
+  const connection = new AcpConnection(resolveAcpConfig(input.config), input.cwd);
+  const messages: AcpTranscriptMessage[] = [];
+  const messageIds = new WeakMap<AcpTranscriptMessage, string | null>();
+  let total = 0;
+  try {
+    connection.start();
+    connection.handleRequest("session/request_permission", (raw) =>
+      permissionOutcome(pickPermissionOption(isRecord(raw) ? raw : {}, ["reject_once", "reject_always"])));
+    connection.handleNotification("session/update", (raw) => {
+      if (!isRecord(raw) || raw.sessionId !== input.sessionId || !isRecord(raw.update)) return;
+      const update = raw.update;
+      const role = update.sessionUpdate === "user_message_chunk" ? "user" : update.sessionUpdate === "agent_message_chunk" ? "assistant" : null;
+      const content = isRecord(update.content) ? update.content : {};
+      if (!role || content.type !== "text" || typeof content.text !== "string") return;
+      // The budget holds for every chunk, the last one that fits included.
+      const text = content.text.slice(0, ACP_TRANSCRIPT_MAX_CHARS - total);
+      if (!text) return;
+      total += text.length;
+      // Agents that name their messages keep two answers in a row apart; others are grouped by role.
+      const messageId = asString(update.messageId) ?? null;
+      const last = messages.at(-1);
+      if (last?.role === role && (messageIds.get(last) ?? null) === messageId) last.text += text;
+      else {
+        const message: AcpTranscriptMessage = { role, text };
+        messages.push(message);
+        messageIds.set(message, messageId);
+      }
+    });
+    const agent = readAgentCapabilities(await initializeAgent(connection, { read: false, write: false }, input.config));
+    if (!agent.loadSession) return { loaded: false, messages: [] };
+    await connection.request("session/load", { sessionId: input.sessionId, cwd: input.cwd, mcpServers: [] }, ACP_SESSION_LOAD_TIMEOUT_MS);
+    return { loaded: true, messages: messages.map((message) => ({ ...message, text: message.text.trim() })).filter((message) => message.text) };
+  } finally {
     await connection.close();
   }
 }

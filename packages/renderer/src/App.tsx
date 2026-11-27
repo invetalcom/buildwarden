@@ -506,11 +506,14 @@ export const App = () => {
     () => parseOrchestrationTeamSettings(snapshot.settings[APP_SETTING_KEYS.orchestrationTeam]),
     [snapshot.settings],
   );
-  const delegationAvailable = orchestrationTeam.roles.length > 0;
+  // Without configured roles, delegation uses a default team over the enabled models. It is then
+  // available but starts off, so runs only delegate where the user chose a team or switched it on.
+  const delegationConfigured = orchestrationTeam.roles.length > 0;
+  const delegationAvailable = delegationConfigured || snapshot.models.some((model) => Boolean(model.enabled));
 
   useEffect(() => {
-    setRunDelegationEnabled(delegationAvailable);
-  }, [delegationAvailable]);
+    setRunDelegationEnabled(delegationConfigured);
+  }, [delegationConfigured]);
   const {
     welcomeOpen,
     welcomeStepIndex,
@@ -1838,9 +1841,9 @@ export const App = () => {
     [runDetail?.run, snapshot.projects],
   );
   const runWorktreeUnavailable = runDetail?.worktreeUnavailable === true;
+  // A delegated child that may delegate in turn coordinates its own agents, so it gets the panel too.
   const selectedRunHasOrchestrationSurface = Boolean(
     runDetail?.run &&
-    runDetail.run.kind !== "orchestration-task" &&
     (runDetail.run.delegationEnabled || runDetail.orchestration),
   );
   // Split views can hold runs from several hosts, and each host grants its own permissions.
@@ -4199,7 +4202,6 @@ export const App = () => {
     const paneLayout = runWorkspaceLayoutsByRunId[entry.runId] ?? cloneDefaultRunWorkspaceLayoutPreference();
     const paneHasOrchestrationSurface = Boolean(
       paneRun &&
-      paneRun.kind !== "orchestration-task" &&
       (paneRun.delegationEnabled || paneDetail?.orchestration),
     );
     const paneHasCouncilSurface = hasCouncilSurface(paneDetail, canOperateRun(entry.runId));

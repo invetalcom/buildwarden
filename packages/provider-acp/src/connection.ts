@@ -76,7 +76,9 @@ export class AcpConnection {
   private child: ChildProcessWithoutNullStreams | null = null;
   private nextId = 1;
   private stderr = "";
-  private readonly pending = new Map<JsonRpcId, { resolve: (value: unknown) => void; reject: (error: Error) => void; timeout?: NodeJS.Timeout; method: string }>();
+  private readonly pending = new Map<JsonRpcId, {
+    resolve: (value: unknown) => void; reject: (error: Error) => void; timeout?: NodeJS.Timeout; method: string; onAnswer?: () => void;
+  }>();
   private readonly requestHandlers = new Map<string, (params: unknown) => Promise<unknown> | unknown>();
   private readonly notificationHandlers = new Map<string, (params: unknown) => void>();
 
@@ -157,7 +159,11 @@ export class AcpConnection {
 
   private closing: Promise<void> | null = null;
 
-  async request<T = unknown>(method: string, params: unknown, timeoutMs = this.timeoutMs): Promise<T> {
+  /**
+   * `onAnswer` runs the moment the answer is read, before any later line of the same batch. The
+   * awaited result arrives only after those lines were handled.
+   */
+  async request<T = unknown>(method: string, params: unknown, timeoutMs = this.timeoutMs, options: { onAnswer?: () => void } = {}): Promise<T> {
     const child = this.child;
     if (!child) throw new Error("The ACP agent is not running.");
     const id = this.nextId++;
@@ -168,7 +174,7 @@ export class AcpConnection {
           reject(new Error(`The ACP agent did not answer ${method} in time.`));
         }, timeoutMs)
         : undefined;
-      this.pending.set(id, { resolve, reject, timeout, method });
+      this.pending.set(id, { resolve, reject, timeout, method, ...(options.onAnswer ? { onAnswer: options.onAnswer } : {}) });
     });
     child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`);
     return await promise as T;
@@ -195,6 +201,7 @@ export class AcpConnection {
       if (message.error) {
         pending.reject(new AcpRequestError(message.error.message || `ACP request failed: ${pending.method}`, message.error.code, pending.method));
       } else {
+        pending.onAnswer?.();
         pending.resolve(message.result);
       }
       return;

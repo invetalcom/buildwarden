@@ -24,7 +24,7 @@ import { createResponseChunkStream } from "./response-chunk-stream";
 import { buildInitialRepoContext } from "./initial-repo-context";
 import { logError, logInfo } from "./logger";
 import { PendingHostToolRequests } from "./pending-host-tool-requests";
-import { createRunToolContext } from "./run-tools";
+import { authorizeShellCommand, buildAgentShellEnv, createRunToolContext } from "./run-tools";
 import { buildOrchestrationAwarePrompt, ORCHESTRATION_COORDINATOR_PROMPT } from "./orchestration-tools";
 import { BROWSER_TOOL } from "./browser-tools";
 import { THEME_TOOLS } from "./design-theme-service";
@@ -209,7 +209,14 @@ const run = async () => {
         git: request.workspaceVcs !== "folder", signal: controller.signal, onChunk: postChunk });
     }
     controller.signal.throwIfAborted();
-    const harness = await createHarnessAdapter(request.providerType, { requestShellApproval, requestUserInput });
+    const harness = await createHarnessAdapter(request.providerType, {
+      requestShellApproval,
+      requestUserInput,
+      authorizeShellCommand: (commandLine, { yoloMode }) => authorizeShellCommand(commandLine, {
+        requestShellApproval, shellAllowlistExtra: request.shellAllowlistExtra, yoloMode,
+      }),
+      shellEnv: buildAgentShellEnv(),
+    });
     activeHarness = harness;
     flushCompileCacheSafely();
     controller.signal.throwIfAborted();

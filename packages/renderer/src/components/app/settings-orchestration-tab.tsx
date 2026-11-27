@@ -1,5 +1,7 @@
 import {
   createOrchestrationRoleFromPreset,
+  defaultOrchestrationModelConcurrency as defaultModelConcurrency,
+  MAX_ORCHESTRATION_DELEGATION_DEPTH,
   MAX_ORCHESTRATION_TOTAL_TOKENS,
   ORCHESTRATION_ROLE_PRESETS,
   parseOrchestrationTeamSettings,
@@ -106,6 +108,23 @@ export const OrchestrationSettingsTab = ({
     () => new Set(draft.models.filter((entry) => entry.enabled).map((entry) => entry.modelId)),
     [draft.models],
   );
+  // Without roles, delegation uses the General role over every enabled model that is not switched
+  // off, so a model without a saved choice shows as on.
+  const automaticTeam = draft.roles.length === 0;
+  const poolSwitchOn = (modelId: string) => {
+    const profile = draft.models.find((entry) => entry.modelId === modelId);
+    return profile ? profile.enabled : automaticTeam;
+  };
+  const poolModelIds = enabledModels.filter((model) => poolSwitchOn(model.id)).map((model) => model.id);
+  /** The first role ends the automatic team; the models it showed as on keep a saved choice. */
+  const withPoolProfiles = (current: OrchestrationTeamSettings): OrchestrationTeamSettings => ({
+    ...current,
+    models: [
+      ...current.models,
+      ...poolModelIds.filter((modelId) => !current.models.some((entry) => entry.modelId === modelId))
+        .map((modelId) => ({ modelId, enabled: true, maxConcurrent: defaultModelConcurrency(current) })),
+    ],
+  });
 
   useEffect(() => {
     setDraft(parseOrchestrationTeamSettings(serializedValue));
@@ -140,7 +159,10 @@ export const OrchestrationSettingsTab = ({
     setSaved(false);
     setDraft((current) => ({
       ...current,
-      models: current.models.map((entry) => entry.modelId === modelId ? update(entry) : entry),
+      // A model the General role uses without a saved choice gets one from its first change.
+      models: current.models.some((entry) => entry.modelId === modelId)
+        ? current.models.map((entry) => entry.modelId === modelId ? update(entry) : entry)
+        : [...current.models, update({ modelId, enabled: true, maxConcurrent: defaultModelConcurrency(current) })],
     }));
   };
 
@@ -283,6 +305,36 @@ export const OrchestrationSettingsTab = ({
                   }}
                 />
               </div>
+              <div className="w-24 space-y-1">
+                <span className="flex items-center gap-1 text-[10px] font-medium text-[var(--ec-faint)]">
+                  <span>Nesting</span>
+                  <SettingsHelp
+                    label="About nested delegation"
+                    title="Delegation depth"
+                    align="right"
+                  >
+                    How many levels of delegation an orchestration may have. 1 lets only the run you start delegate;
+                    2 lets its tasks delegate sub-tasks of their own, and 3 one level more. A task that delegates
+                    reports only when its own tasks are done. Every level shares the task and concurrency limits.
+                  </SettingsHelp>
+                </span>
+                <Input
+                  type="number"
+                  min={1}
+                  max={MAX_ORCHESTRATION_DELEGATION_DEPTH}
+                  aria-label="Orchestration delegation depth"
+                  className="h-8 text-xs tabular-nums"
+                  value={draft.maxDelegationDepth ?? 1}
+                  disabled={!canEdit}
+                  onChange={(event) => {
+                    setSaved(false);
+                    setDraft((current) => ({
+                      ...current,
+                      maxDelegationDepth: clampInteger(event.target.value, current.maxDelegationDepth ?? 1, 1, MAX_ORCHESTRATION_DELEGATION_DEPTH),
+                    }));
+                  }}
+                />
+              </div>
               <Button
                 type="button"
                 size="sm"
@@ -308,11 +360,13 @@ export const OrchestrationSettingsTab = ({
           <div className="min-w-0">
             <CardTitle className="text-base">Model pool</CardTitle>
             <CardDescription>
-              Only selected models can receive delegated work. Capacity limits queue excess tasks.
+              {automaticTeam
+                ? "Without roles, delegated work may go to every model switched on here; switch one off to leave it out. Capacity limits queue excess tasks."
+                : "Only selected models can receive delegated work. Capacity limits queue excess tasks."}
             </CardDescription>
           </div>
           <span className="shrink-0 rounded-full bg-[var(--ec-panel-soft)] px-2 py-1 text-[10px] font-medium tabular-nums text-[var(--ec-muted)]">
-            {selectedModelIds.size} active
+            {poolModelIds.length} active
           </span>
         </CardHeader>
         <CardContent className="border-t border-[var(--ec-border)] p-0">
@@ -328,7 +382,7 @@ export const OrchestrationSettingsTab = ({
               <div className="divide-y divide-[var(--ec-border)]">
                 {enabledModels.map((model) => {
                   const profile = draft.models.find((entry) => entry.modelId === model.id);
-                  const enabled = profile?.enabled === true;
+                  const enabled = poolSwitchOn(model.id);
                   return (
                     <div
                       key={model.id}
@@ -377,7 +431,7 @@ export const OrchestrationSettingsTab = ({
                           max={8}
                           aria-label={`Concurrency for ${model.displayName}`}
                           className="h-8 text-xs tabular-nums"
-                          value={profile?.maxConcurrent ?? 1}
+                          value={profile?.maxConcurrent ?? (automaticTeam ? defaultModelConcurrency(draft) : 1)}
                           disabled={!canEdit || !enabled}
                           onChange={(event) => updateModel(model.id, (current) => ({
                             ...current,
@@ -421,15 +475,15 @@ export const OrchestrationSettingsTab = ({
               triggerClassName="h-8 rounded-md px-2.5 text-xs"
               menuClassName="w-80"
               maxMenuHeightPx={280}
-              disabled={!canEdit || selectedModelIds.size === 0}
+              disabled={!canEdit || poolModelIds.length === 0}
               options={predefinedRoleOptions}
               onValueChange={(presetId) => {
-                const role = createOrchestrationRoleFromPreset(presetId, [...selectedModelIds]);
+                const role = createOrchestrationRoleFromPreset(presetId, poolModelIds);
                 if (!role) return;
                 setSaved(false);
                 setDraft((current) => current.roles.some((entry) => entry.id === role.id)
                   ? current
-                  : { ...current, roles: [...current.roles, role] });
+                  : { ...withPoolProfiles(current), roles: [...current.roles, role] });
               }}
             />
             <Button
@@ -437,12 +491,12 @@ export const OrchestrationSettingsTab = ({
               variant="secondary"
               size="sm"
               className="h-8 shrink-0 gap-1.5"
-              disabled={!canEdit || selectedModelIds.size === 0}
+              disabled={!canEdit || poolModelIds.length === 0}
               onClick={() => {
                 setSaved(false);
                 setDraft((current) => ({
-                  ...current,
-                  roles: [...current.roles, newRole([...selectedModelIds][0] ?? "")],
+                  ...withPoolProfiles(current),
+                  roles: [...current.roles, newRole(poolModelIds[0] ?? "")],
                 }));
               }}
             >
@@ -454,9 +508,7 @@ export const OrchestrationSettingsTab = ({
         <CardContent className="border-t border-[var(--ec-border)] p-0">
           {draft.roles.length === 0 ? (
             <div className="px-4 py-6 text-center text-sm text-[var(--ec-muted)]">
-              {selectedModelIds.size === 0
-                ? "Enable at least one model, then add a role."
-                : "Add a predefined role or create a custom role."}
+              Add a predefined role or create a custom role. Until then, delegation uses one General role over every model switched on in the model pool.
             </div>
           ) : draft.roles.map((role) => (
             <section key={role.id} className="border-b border-[var(--ec-border)] p-3 last:border-b-0">
@@ -587,9 +639,10 @@ export const OrchestrationSettingsTab = ({
             <p className="border-t border-[var(--ec-border)] px-4 py-2 text-[11px] text-[var(--ec-faint)]">
               The admin scope is required to edit orchestration settings.
             </p>
-          ) : validRoleCount === 0 ? (
+          ) : draft.roles.length > 0 && validRoleCount === 0 ? (
+            // Without any roles, delegation uses the General role; only roles that are all invalid block it.
             <p className="border-t border-[var(--ec-border)] px-4 py-2 text-[11px] text-[var(--ec-danger)]">
-              Add a valid role before enabling delegation.
+              No role is valid, so delegation cannot be enabled. Fix a role, or remove them all to use the General role.
             </p>
           ) : null}
         </CardContent>

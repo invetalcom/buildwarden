@@ -183,7 +183,7 @@ export class OrchestrationCoordinatorService extends AppService<
     const undelivered = this.undeliveredOrchestrationTaskIds(orchestration);
     const lines = formatOrchestrationResumeTasks(tasks.map((task) => ({
       task,
-      modelName: this.orchestrationModelName(task.modelId),
+      modelName: this.orchestrationTaskModelName(task),
       hasNews: undelivered.has(task.id),
       questions: task.status === "waiting-input" && task.childRunId ? this.pendingChildQuestions(task.childRunId) : [],
     })));
@@ -210,6 +210,12 @@ export class OrchestrationCoordinatorService extends AppService<
   /** Moves the cursor for blocking waits the coordinator received (see orchestration-delivery). */
   settleCoordinatorWaitDeliveries(orchestrationId: string, options: { turnEnded: boolean }): void {
     settleCoordinatorWaitDeliveries(this.db, orchestrationId, options);
+  }
+
+  /** The model a task runs with; a remote task's runs with the host's model. */
+  orchestrationTaskModelName(task: Pick<OrchestrationTaskRecord, "modelId" | "remote">): string {
+    if (task.remote) return `${task.remote.modelId ?? "default model"} on ${task.remote.hostLabel}`;
+    return this.orchestrationModelName(task.modelId);
   }
 
   orchestrationModelName(modelId: string): string {
@@ -370,6 +376,6 @@ export class OrchestrationCoordinatorService extends AppService<
    * failed turn did not receive, because the delivery cursor has not moved.
    */
   async onRunEnded({ run, turnFinished }: RunEnded): Promise<void> {
-    if (turnFinished && run.delegationEnabled && run.kind !== "orchestration-task") await this.handleOrchestrationCoordinatorTurnTerminal(run.id);
+    if (turnFinished && run.delegationEnabled) await this.handleOrchestrationCoordinatorTurnTerminal(run.id);
   }
 }

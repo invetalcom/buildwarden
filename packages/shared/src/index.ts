@@ -1753,6 +1753,26 @@ export const PROVIDER_CONFIG_ACP_ENV_KEY = "acpEnv";
 export const PROVIDER_CONFIG_ACP_SESSION_OPTIONS_KEY = "acpSessionOptions";
 export const PROVIDER_CONFIG_ACP_AUTH_METHOD_KEY = "acpAuthMethod";
 export interface AcpRegistryAgent { id: string; name: string; description: string; command: string }
+/** A session an ACP agent saved itself (ACP session/list). */
+export interface AcpAgentSessionSummary {
+  sessionId: string;
+  cwd: string;
+  title: string | null;
+  updatedAt: string | null;
+  /** A run of this provider already continues the session. */
+  imported: boolean;
+}
+export interface AcpAgentSessionList {
+  /** False when the agent does not list its sessions. */
+  supported: boolean;
+  sessions: AcpAgentSessionSummary[];
+}
+export interface AcpAgentSessionImportInput {
+  providerAccountId: string;
+  projectId: string;
+  sessionId: string;
+  title?: string;
+}
 /** ACP model id meaning "whatever the agent uses by default"; nothing is sent to the agent for it. */
 export const ACP_DEFAULT_MODEL_ID = "default";
 
@@ -2290,11 +2310,17 @@ export interface OrchestrationTeamSettings {
   maxTasksPerOrchestration: number;
   /** Input plus output tokens shared by the coordinator and its children. Unset means no cap. */
   maxTotalTokens?: number;
+  /**
+   * How many levels of delegation an orchestration may have. 1 (the default) lets only the
+   * top-level run delegate; 2 lets its children delegate once more, and so on.
+   */
+  maxDelegationDepth?: number;
   models: OrchestrationModelProfile[];
   roles: OrchestrationRoleProfile[];
 }
 
 export const MAX_ORCHESTRATION_TOTAL_TOKENS = 1_000_000_000;
+export const MAX_ORCHESTRATION_DELEGATION_DEPTH = 3;
 
 export const DEFAULT_ORCHESTRATION_TEAM_SETTINGS: OrchestrationTeamSettings = {
   version: 1,
@@ -2393,17 +2419,57 @@ export const parseOrchestrationTeamSettings = (
       }];
     });
     const maxTotalTokens = orchestrationInteger(parsed.maxTotalTokens, 0, 0, MAX_ORCHESTRATION_TOTAL_TOKENS);
+    const maxDelegationDepth = orchestrationInteger(parsed.maxDelegationDepth, 1, 1, MAX_ORCHESTRATION_DELEGATION_DEPTH);
     return {
       version: 1,
       maxConcurrentTasks: orchestrationInteger(parsed.maxConcurrentTasks, 3, 1, 8),
       maxTasksPerOrchestration: orchestrationInteger(parsed.maxTasksPerOrchestration, 12, 1, 64),
       ...(maxTotalTokens > 0 ? { maxTotalTokens } : {}),
+      ...(maxDelegationDepth > 1 ? { maxDelegationDepth } : {}),
       models,
       roles,
     };
   } catch {
     return { ...DEFAULT_ORCHESTRATION_TEAM_SETTINGS, models: [], roles: [] };
   }
+};
+
+export const DEFAULT_ORCHESTRATION_ROLE_ID = "general";
+
+/** The concurrency a model gets in the default team when the user set none for it. */
+export const defaultOrchestrationModelConcurrency = (base: Pick<OrchestrationTeamSettings, "maxConcurrentTasks">): number =>
+  Math.min(2, base.maxConcurrentTasks);
+
+/**
+ * The team delegation uses while the user has configured no roles: one general role over every
+ * enabled model, preferring `preferredModelId` (usually the coordinator's own model). The limits
+ * stay those of `base`, so delegation needs no setup but keeps the user's caps.
+ */
+export const buildDefaultOrchestrationTeam = (
+  base: OrchestrationTeamSettings,
+  enabledModelIds: readonly string[],
+  preferredModelId?: string | null,
+): OrchestrationTeamSettings => {
+  const modelIds = Array.from(new Set(enabledModelIds.filter(Boolean)));
+  const preferred = preferredModelId && modelIds.includes(preferredModelId) ? preferredModelId : modelIds[0];
+  if (!preferred) return { ...base, models: [], roles: [] };
+  // A model the user already gave limits keeps them; the others get the default.
+  const profiles = new Map(base.models.map((model) => [model.modelId, model]));
+  return {
+    ...base,
+    models: modelIds.map((modelId) => {
+      const profile = profiles.get(modelId);
+      return profile ? { ...profile, enabled: true } : { modelId, enabled: true, maxConcurrent: defaultOrchestrationModelConcurrency(base) };
+    }),
+    roles: [{
+      id: DEFAULT_ORCHESTRATION_ROLE_ID,
+      name: "General",
+      description: "Researches, implements or reviews one focused part of the task. Pick the model that fits the work; omit modelId for the coordinator's own model.",
+      eligibleModelIds: modelIds,
+      preferredModelId: preferred,
+      maxConcurrent: base.maxConcurrentTasks,
+    }],
+  };
 };
 
 export interface OrchestrationRecord {
@@ -2459,7 +2525,65 @@ export interface OrchestrationTaskRecord {
   updatedAt: string;
   startedAt: string | null;
   finishedAt: string | null;
+  /** Set when the task runs on a linked host; it then has no local child run. Optional for older records. */
+  remote?: OrchestrationTaskRemote | null;
 }
+
+/** Where a delegated task runs on a linked host, and the run it became there. */
+export interface OrchestrationTaskRemote {
+  hostId: string;
+  hostLabel: string;
+  /** The host's project; null lets the host pick the one with this project's name. */
+  projectId: string | null;
+  /** A model id from the host's list_models; null uses the host's default. */
+  modelId: string | null;
+  /** The host's run, once it started. */
+  runId: string | null;
+  /** The host's request the run waits for, as last seen. */
+  waitingFor?: "approval" | "input" | null;
+  /**
+   * The task ended here, but its host has not confirmed yet that the run stopped; polling retries.
+   * Without a runId, the task was cancelled while its host was starting the run: once no start
+   * owns it any more, polling tells the user to check the host for that run.
+   */
+  stopPending?: boolean;
+}
+
+/** Another BuildWarden host this one may delegate tasks to, through its MCP endpoint. */
+export interface LinkedHostRecord {
+  id: string;
+  label: string;
+  /** The host's /mcp URL. Its token is kept in the secret store. */
+  mcpUrl: string;
+}
+
+export interface LinkedHostInput {
+  id?: string;
+  label: string;
+  mcpUrl: string;
+  /** Required for a new host; omitted keeps the saved token. */
+  token?: string;
+}
+
+/** How many linked hosts the setting keeps; saving one more is refused. */
+export const MAX_LINKED_HOSTS = 20;
+
+export const parseLinkedHostsSetting = (raw: string | undefined | null): LinkedHostRecord[] => {
+  if (!raw?.trim()) return [];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.flatMap((entry): LinkedHostRecord[] => {
+      if (!entry || typeof entry !== "object") return [];
+      const { id, label, mcpUrl } = entry as Record<string, unknown>;
+      return typeof id === "string" && typeof label === "string" && typeof mcpUrl === "string" && id && mcpUrl
+        ? [{ id, label: label.slice(0, 80), mcpUrl }]
+        : [];
+    }).slice(0, MAX_LINKED_HOSTS);
+  } catch {
+    return [];
+  }
+};
 
 export interface OrchestrationEventRecord {
   id: string;
@@ -2621,6 +2745,8 @@ export interface RunDeletionImpact {
   runId: string;
   coordinatorRunId: string;
   orchestrationId: string | null;
+  /** Orchestrations that delegated children coordinate, deleted with this one. Optional for older manifests. */
+  nestedOrchestrationIds?: string[];
   runIds: string[];
   runningRunIds: string[];
   ownedDirectories: string[];
@@ -5481,6 +5607,14 @@ export interface DesktopApi {
   getRemoteAccessStatus(): Promise<RemoteAccessStatus>;
   listHostDirectories(input?: HostDirectoryBrowseInput): Promise<HostDirectoryListing>;
   createRemoteAccessPairing(input?: RemoteAccessPairingInput): Promise<RemoteAccessPairingGrant>;
+  /** Other BuildWarden hosts orchestrations may delegate tasks to. */
+  listLinkedHosts(): Promise<LinkedHostRecord[]>;
+  saveLinkedHost(input: LinkedHostInput): Promise<LinkedHostRecord>;
+  removeLinkedHost(hostId: string): Promise<void>;
+  /** Connects to a linked host and lists its projects. */
+  checkLinkedHost(hostId: string): Promise<{ projects: Array<{ id: string; name: string }> }>;
+  /** Issues a revocable session for an MCP client outside the app, such as Claude Code or Codex in a terminal. */
+  createRemoteAccessAgentToken(input?: Pick<RemoteAccessPairingInput, "label" | "scopes">): Promise<RemoteAccessAgentToken>;
   listRemoteAccessSessions(): Promise<RemoteAccessSession[]>;
   revokeRemoteAccessSession(sessionId: string): Promise<void>;
   getNetworkProxySettings(): Promise<NetworkProxySettingsSnapshot>;
@@ -5690,6 +5824,10 @@ export interface DesktopApi {
   /** Drops the provider's remembered session capabilities and, where the agent allows it, checks them again now. */
   recheckProviderCapabilities(providerAccountId: string): Promise<ProviderCapabilityRecheckResult>;
   listAcpRegistryAgents(): Promise<AcpRegistryAgent[]>;
+  /** The sessions an ACP agent saved for a project's folder. */
+  listAcpAgentSessions(providerAccountId: string, projectId: string): Promise<AcpAgentSessionList>;
+  /** Imports an ACP agent's saved session as a run that continues it. */
+  importAcpAgentSession(input: AcpAgentSessionImportInput): Promise<RunRecord>;
   deleteRun(runId: string): Promise<void>;
   getModelDeletionImpact(modelId: string): Promise<ModelDeletionImpact>;
   deleteModel(modelId: string): Promise<void>;
@@ -5922,6 +6060,8 @@ export const REMOTE_ACCESS_HEALTH_PATH = "/health" as const;
 export const REMOTE_ACCESS_LEGACY_HEALTH_PATH = "/api/v1/health" as const;
 export const REMOTE_ACCESS_INFO_PATH = "/api/v1/info" as const;
 export const REMOTE_ACCESS_RPC_PATH = "/api/v1/rpc" as const;
+/** MCP for agents outside the app, authenticated by a remote access session. */
+export const REMOTE_ACCESS_MCP_PATH = "/mcp" as const;
 export const REMOTE_ACCESS_WEBSOCKET_PATH = "/api/v1/events" as const;
 export const REMOTE_ACCESS_PAIRING_PATH = "/api/v1/auth/pair" as const;
 export const REMOTE_ACCESS_SESSION_PATH = "/api/v1/auth/session" as const;
@@ -6066,6 +6206,8 @@ export interface RemoteAccessSession {
   revokedAt: string | null;
   /** Null for the host-served same-origin cookie flow. */
   clientOrigin: string | null;
+  /** "mcp": an agent token, which reaches only the MCP endpoint and not the app's own remote API. */
+  audience?: "mcp";
 }
 
 export interface RemoteAccessSessionRecord extends RemoteAccessSession {
@@ -6099,6 +6241,14 @@ export interface RemoteAccessAuditRecord {
   remoteAddress: string | null;
   details: Record<string, unknown> | null;
   createdAt: string;
+}
+
+/** A session issued directly for an agent outside the app; the token is shown once. */
+export interface RemoteAccessAgentToken {
+  session: RemoteAccessSession;
+  token: string;
+  /** Where the agent connects, through Tailscale when it is verified, else on loopback. */
+  mcpUrl: string;
 }
 
 export interface RemoteAccessPairingExchangeRequest {
@@ -6325,6 +6475,8 @@ export type RemoteOperationMap = {
   deleteProviderAccount: DesktopApi["deleteProviderAccount"];
   recheckProviderCapabilities: DesktopApi["recheckProviderCapabilities"];
   listAcpRegistryAgents: DesktopApi["listAcpRegistryAgents"];
+  listAcpAgentSessions: DesktopApi["listAcpAgentSessions"];
+  importAcpAgentSession: DesktopApi["importAcpAgentSession"];
   deleteModel: DesktopApi["deleteModel"];
   setAppSetting: DesktopApi["setAppSetting"];
   setProjectRevisionVerificationPolicy: DesktopApi["setProjectRevisionVerificationPolicy"];
@@ -6609,6 +6761,8 @@ export const IPC_CHANNELS = {
   deleteProviderAccount: "buildwarden:delete-provider-account",
   recheckProviderCapabilities: "buildwarden:recheck-provider-capabilities",
   listAcpRegistryAgents: "buildwarden:list-acp-registry-agents",
+  listAcpAgentSessions: "buildwarden:list-acp-agent-sessions",
+  importAcpAgentSession: "buildwarden:import-acp-agent-session",
   deleteRun: "buildwarden:delete-run",
   deleteModel: "buildwarden:delete-model",
   getRunVerification: "buildwarden:get-run-verification",
@@ -6668,6 +6822,11 @@ export const IPC_CHANNELS = {
   getRemoteAccessStatus: "buildwarden:get-remote-access-status",
   listHostDirectories: "buildwarden:list-host-directories",
   createRemoteAccessPairing: "buildwarden:create-remote-access-pairing",
+  createRemoteAccessAgentToken: "buildwarden:create-remote-access-agent-token",
+  listLinkedHosts: "buildwarden:list-linked-hosts",
+  saveLinkedHost: "buildwarden:save-linked-host",
+  removeLinkedHost: "buildwarden:remove-linked-host",
+  checkLinkedHost: "buildwarden:check-linked-host",
   listRemoteAccessSessions: "buildwarden:list-remote-access-sessions",
   revokeRemoteAccessSession: "buildwarden:revoke-remote-access-session",
   getNetworkProxySettings: "buildwarden:get-network-proxy-settings",
@@ -6875,6 +7034,7 @@ export const APP_SETTING_KEYS = {
   projectForgeIssuePreferences: "projectForgeIssuePreferences",
   /** JSON encoded {@link OrchestrationTeamSettings}. */
   orchestrationTeam: "orchestrationTeam",
+  linkedHosts: "linkedHosts",
   /** JSON encoded {@link CouncilSettings}. */
   council: "council",
   /** JSON object with app-wide outbound proxy host/port/user settings (password stored in secure storage). */

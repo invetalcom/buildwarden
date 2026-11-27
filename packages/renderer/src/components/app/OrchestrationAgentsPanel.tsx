@@ -291,7 +291,7 @@ export const OrchestrationAgentsPanel = ({
       },
       description: [
         role?.name ?? task.roleId,
-        modelLabels.get(task.modelId) ?? task.modelId,
+        task.remote ? `on ${task.remote.hostLabel}` : modelLabels.get(task.modelId) ?? task.modelId,
         task.intent,
         formatElapsed(task),
         task.adoptionStatus !== "none" ? `changes: ${task.adoptionStatus}` : null,
@@ -393,7 +393,9 @@ export const OrchestrationAgentsPanel = ({
                   <div className="min-w-0 flex-1">
                     <h3 className="text-sm font-semibold text-[var(--ec-text)]">{selectedTask.title}</h3>
                     <p className="mt-0.5 text-[11px] text-[var(--ec-muted)]">
-                      {modelLabels.get(selectedTask.modelId) ?? selectedTask.modelId} · {formatCount.format(selectedTask.inputTokens + selectedTask.outputTokens)} tokens
+                      {selectedTask.remote
+                        ? `${selectedTask.remote.modelId ?? "Default model"} on ${selectedTask.remote.hostLabel}${selectedTask.remote.runId ? ` · run ${selectedTask.remote.runId}` : ""}`
+                        : `${modelLabels.get(selectedTask.modelId) ?? selectedTask.modelId} · ${formatCount.format(selectedTask.inputTokens + selectedTask.outputTokens)} tokens`}
                     </p>
                   </div>
                 </div>
@@ -506,7 +508,11 @@ export const OrchestrationAgentsPanel = ({
                     <ActivityRichText content={entry.content} compact className="break-words" />
                   </div>
                 ))}</div> : <p className="mb-2 text-[11px] text-[var(--ec-faint)]">No messages for this agent.</p>}
-                <div className="flex gap-1">
+                {selectedTask.remote ? (
+                  <p className="text-[11px] text-[var(--ec-muted)]">
+                    This task runs on {selectedTask.remote.hostLabel}. Continue its run there to send it a message.
+                  </p>
+                ) : <div className="flex gap-1">
                   <Input value={message} disabled={!canOperate || busyAction != null} className="h-8 text-xs" placeholder="Deliver at the next child turn boundary" onChange={(event) => setMessage(event.target.value)} />
                   <Button
                     type="button"
@@ -521,7 +527,7 @@ export const OrchestrationAgentsPanel = ({
                   >
                     <Send className="size-3.5" />
                   </Button>
-                </div>
+                </div>}
               </AgentDetailSection>
 
               <AgentDetailSection

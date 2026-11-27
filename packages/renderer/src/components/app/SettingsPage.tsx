@@ -532,6 +532,7 @@ export const SettingsPage = ({
           modelDisplayName={modelDisplayName}
           modelBaseUrl={modelBaseUrl}
           providerAccounts={providerAccounts}
+          projects={projects}
           models={models}
           openAiPresetUserChoseCustom={openAiPresetUserChoseCustom}
           openAiPresetsGrouped={openAiPresetsGrouped}

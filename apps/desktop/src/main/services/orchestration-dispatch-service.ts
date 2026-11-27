@@ -13,6 +13,7 @@ import { ORCHESTRATION_TERMINAL_TASK_STATUSES } from "../orchestration-runtime-a
 import { DEFERRED_CHILD_RESUME_PROMPT } from "../orchestration-tools";
 import { captureOrchestrationBaseline, restoreOrchestrationBaseline } from "../orchestration-workspace";
 import { AppService } from "./app-service";
+import { parseDelegatedTasks } from "./orchestration-task-parsing";
 import { buildDelegatedTaskPrompt, ORCHESTRATION_ACTIVE_TASK_STATUSES, ORCHESTRATION_CANCELLABLE_STATUSES } from "./orchestration-policy";
 import { providerAllowsMissingApiKey, type ProviderLimitState } from "./provider-model-support";
 import {
@@ -35,6 +36,7 @@ export class OrchestrationDispatchService extends AppService<
   | "orchestration"
   | "orchestrationCoordinator"
   | "orchestrationMessages"
+  | "orchestrationRemote"
   | "orchestrationResults"
   | "orchestrationTools"
   | "providerRuntime"
@@ -127,7 +129,8 @@ export class OrchestrationDispatchService extends AppService<
         lineageTitle: task.title,
         orchestrationTaskId: task.id,
         workspaceSetupProfile,
-        delegationEnabled: false,
+        // Nested delegation: a child may coordinate when the orchestration's depth allows it.
+        delegationEnabled: this.services.orchestration.childMayDelegate(coordinator, this.db.getOrchestration(task.orchestrationId)),
       });
     } catch (error) {
       await this.services.orchestrationResults.closeFailedChildLaunch(launch, project.repoPath, workspace, error);
@@ -176,6 +179,7 @@ export class OrchestrationDispatchService extends AppService<
     );
     const prompt = buildDelegatedTaskPrompt({
       roleName: role?.name ?? task.roleId, roleDescription: role?.description, intent: task.intent, task: task.prompt, goalText: coordinator.goalText,
+      mayDelegate: Boolean(child.delegationEnabled),
     });
     this.services.skills.skillService.inheritSelection("run", child.id, coordinator.id);
     const worker = await this.services.runWorkerHost.startWorker(
@@ -200,6 +204,15 @@ export class OrchestrationDispatchService extends AppService<
     return this.db.getRun(child.id);
   }
 
+  /**
+   * A delegated coordinator whose turn ended while its own tasks go on. It runs nothing, and its
+   * tasks need the capacity it would hold: counting it could stall the tree for good.
+   */
+  private waitsForItsOwnTasks(task: OrchestrationTaskRecord): boolean {
+    return Boolean(task.childRunId) && !this.services.activeWorkers.runWorkers.has(task.childRunId!)
+      && this.services.orchestration.isStillCoordinating(task.childRunId!);
+  }
+
   /** No await between counting and reserving: all coordinators share this admission point. */
   reserveOrchestrationTask(task: OrchestrationTaskRecord): boolean {
     const orchestration = this.db.getOrchestration(task.orchestrationId);
@@ -211,7 +224,7 @@ export class OrchestrationDispatchService extends AppService<
     if (!role || !model || this.services.orchestration.orchestrationBudgetExhaustion(orchestration)) return false;
     const active = this.db.listOrchestrationsWithStatuses(["active", "waiting", "attention", "paused"])
       .flatMap((entry) => this.db.listOrchestrationTasks(entry.id))
-      .filter((entry) => ORCHESTRATION_ACTIVE_TASK_STATUSES.has(entry.status));
+      .filter((entry) => ORCHESTRATION_ACTIVE_TASK_STATUSES.has(entry.status) && !entry.remote && !this.waitsForItsOwnTasks(entry));
     if (active.length >= orchestration.teamSnapshot.maxConcurrentTasks
       || active.filter((entry) => entry.roleId === task.roleId).length >= role.maxConcurrent
       || active.filter((entry) => entry.modelId === task.modelId).length >= model.maxConcurrent) return false;
@@ -231,7 +244,7 @@ export class OrchestrationDispatchService extends AppService<
       limits.set(modelId, pending);
       return pending;
     };
-    for (const task of this.db.listOrchestrationTasks(orchestrationId).filter((entry) => entry.status === "pending")) {
+    for (const task of this.db.listOrchestrationTasks(orchestrationId).filter((entry) => entry.status === "pending" && !entry.remote)) {
       if (task.deferredUntil && Date.parse(task.deferredUntil) > Date.now()) continue;
       const role = orchestration.teamSnapshot.roles.find((entry) => entry.id === task.roleId);
       const modelProfile = orchestration.teamSnapshot.models.find((entry) => entry.modelId === task.modelId && entry.enabled);
@@ -414,63 +427,13 @@ export class OrchestrationDispatchService extends AppService<
     if (existing.length + rawTasks.length > orchestration.teamSnapshot.maxTasksPerOrchestration) {
       throw new OrchestrationToolError("task_limit_reached", `This orchestration is limited to ${orchestration.teamSnapshot.maxTasksPerOrchestration} tasks.`);
     }
-    const parsed = rawTasks.map((value, index) => {
-      if (!value || typeof value !== "object" || Array.isArray(value)) {
-        throw new OrchestrationToolError("invalid_arguments", `Task ${index + 1} must be an object.`);
-      }
-      const entry = value as Record<string, unknown>;
-      const clientTaskId = String(entry.clientTaskId ?? "").trim();
-      const title = String(entry.title ?? "").trim();
-      const prompt = String(entry.prompt ?? "").trim();
-      const roleId = String(entry.roleId ?? "").trim();
-      let intent: OrchestrationTaskRecord["intent"] | null = null;
-      if (entry.intent === "implement" || entry.intent === "inspect") intent = entry.intent;
-      if (!clientTaskId || !title || !prompt || !roleId || !intent) {
-        throw new OrchestrationToolError("invalid_arguments", `Task ${index + 1} is missing clientTaskId, title, prompt, roleId, or intent.`);
-      }
-      // The tool schema states these limits, but transports do not all enforce schemas.
-      for (const [field, value, limit] of [
-        ["clientTaskId", clientTaskId, 80], ["title", title, 160], ["roleId", roleId, 80], ["prompt", prompt, 65_536],
-      ] as const) {
-        if (value.length > limit) {
-          throw new OrchestrationToolError("invalid_arguments", `Task ${index + 1} ${field} is longer than ${String(limit)} characters.`);
-        }
-      }
-      if (this.db.getOrchestrationTaskByClientTaskId(orchestration.id, clientTaskId)) {
-        throw new OrchestrationToolError("invalid_arguments", `clientTaskId "${clientTaskId}" already exists in this orchestration.`);
-      }
-      const role = orchestration.teamSnapshot.roles.find((entryRole) => entryRole.id === roleId);
-      if (!role) throw new OrchestrationToolError("role_unknown", `Unknown orchestration role: ${roleId}`);
-      const requestedModelId = typeof entry.modelId === "string" && entry.modelId.trim()
-        ? entry.modelId.trim()
-        : role.preferredModelId;
-      if (!role.eligibleModelIds.includes(requestedModelId)) {
-        throw new OrchestrationToolError("model_not_eligible", `Model "${requestedModelId}" is not eligible for role "${role.name}".`);
-      }
-      if (orchestration.teamSnapshot.maxTotalTokens && this.services.orchestrationTools.modelReportsNoUsage(requestedModelId)) {
-        throw new OrchestrationToolError(
-          "model_unavailable",
-          `Model "${requestedModelId}" reports no token usage, so this orchestration's token budget cannot limit it. Choose another model.`,
-        );
-      }
-      if (intent === "implement" && coordinator.mode !== "code") {
-        throw new OrchestrationToolError("not_authorized", "Only a coordinator running in code mode may delegate implementation tasks.");
-      }
-      const permissionMode = entry.permissionMode ?? "inherit";
-      if (permissionMode !== "inherit" && permissionMode !== "supervised") {
-        throw new OrchestrationToolError("invalid_arguments", "Invalid child permission mode.");
-      }
-      const executionOptions = this.services.orchestrationTools.validateTaskExecutionOptions(requestedModelId, entry.executionOptions, index);
-      return {
-        clientTaskId, title, prompt, roleId, modelId: requestedModelId, intent,
-        permissionMode: permissionMode as "inherit" | "supervised", executionOptions,
-      };
+    const parsed = parseDelegatedTasks(rawTasks, {
+      orchestration, coordinator,
+      clientTaskIdExists: (clientTaskId) => Boolean(this.db.getOrchestrationTaskByClientTaskId(orchestration.id, clientTaskId)),
+      modelReportsNoUsage: (modelId) => this.services.orchestrationTools.modelReportsNoUsage(modelId),
+      validateExecutionOptions: (modelId, raw, index) => this.services.orchestrationTools.validateTaskExecutionOptions(modelId, raw, index),
+      readRemotePlacement: (entry, index) => this.services.orchestrationRemote.readRemotePlacement(entry, index),
     });
-    const clientIds = new Set<string>();
-    for (const task of parsed) {
-      if (clientIds.has(task.clientTaskId)) throw new OrchestrationToolError("invalid_arguments", `Duplicate clientTaskId: ${task.clientTaskId}`);
-      clientIds.add(task.clientTaskId);
-    }
 
     const wave = this.db.createOrchestrationWave(orchestration.id);
     await this.db.flushDurable();
@@ -502,6 +465,8 @@ export class OrchestrationDispatchService extends AppService<
     });
     await this.db.flushDurable();
     await this.dispatchOrchestrationTasks(orchestration.id);
+    // Started after the caller's mutation lock, which starting a remote task takes itself.
+    for (const task of tasks) if (task.remote) void this.services.orchestrationRemote.startRemoteTask(task.id);
     return tasks.map((task) => this.db.getOrchestrationTask(task.id));
   }
 
@@ -533,6 +498,7 @@ export class OrchestrationDispatchService extends AppService<
         permissionMode: source.permissionMode,
         executionOptions: this.db.getOrchestrationTaskExecutionOptions(source.id),
         retryOfTaskId: source.id,
+        remote: source.remote ? { ...source.remote, runId: null, waitingFor: null } : null,
       });
       this.db.appendOrchestrationEvent({
         orchestrationId: orchestration.id,
@@ -542,6 +508,7 @@ export class OrchestrationDispatchService extends AppService<
         content: `Retry of ${source.id}.`,
       });
       await this.dispatchOrchestrationTasks(orchestration.id);
+      if (replacement.remote) void this.services.orchestrationRemote.startRemoteTask(replacement.id);
       return this.db.getOrchestrationTask(replacement.id);
     });
   }
@@ -577,6 +544,8 @@ export class OrchestrationDispatchService extends AppService<
       });
     const prompt = buildDelegatedTaskPrompt({
       roleName: role?.name ?? task.roleId, roleDescription: role?.description, intent: task.intent, task: task.prompt, goalText: coordinator.goalText,
+      // As at its first start: a child within the depth limit may delegate.
+      mayDelegate: Boolean(child.delegationEnabled),
     });
     this.db.updateRunStatus(child.id, "preparing", { errorMessage: null });
     this.services.skills.skillService.inheritSelection("run", child.id, coordinator.id);
