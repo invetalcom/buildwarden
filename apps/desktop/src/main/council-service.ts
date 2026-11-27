@@ -567,6 +567,8 @@ export class CouncilService {
 
   /** Stops a run's validation before the run itself is deleted. */
   async stopForRun(runId: string): Promise<void> {
+    // A start that is still reading the run saves its round later; waiting for the queue lets it be cancelled too.
+    await this.exclusive(async () => undefined);
     for (const round of this.store.listCouncilRounds(runId)) {
       if (round.status === "reviewing" || round.status === "assessing") await this.cancel(round.id);
       this.clearDeadline(round.id);

@@ -605,7 +605,16 @@ abstract class ProjectLoopRunnerCore {
     return {
       latestCouncilRound: async (runId) => (await this.deps.getCouncilRounds(runId)).at(-1),
       getCouncilRound: (roundId) => this.deps.db.getCouncilRound(roundId),
-      startCouncil: (runId) => this.deps.startCouncil(runId),
+      startCouncil: async (runId) => {
+        const round = await this.deps.startCouncil(runId);
+        // A cancel that finished while this start was on its way already stopped the reviews; stop this one too.
+        if (state.cancelled) {
+          await this.deps.stopCouncilForRun(runId).catch((error) => {
+            this.deps.logWarn("Could not stop a council review that started after its loop was cancelled.", { loopId: loop.id, runId, error });
+          });
+        }
+        return round;
+      },
       applyCouncilFindings: (roundId, groupIds) => this.deps.applyCouncilFindings(roundId, groupIds),
       verifyRun: (runId) => this.deps.verifyRun(runId),
       verificationIsCurrent: async (runId) => (await this.deps.getRunVerification(runId)).status === "passed",
