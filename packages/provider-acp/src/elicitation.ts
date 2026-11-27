@@ -95,7 +95,8 @@ export const readElicitationForm = (raw: unknown): ElicitationForm | null => {
       metadata: { provider: "acp", elicitation: true },
     },
     respond: (answers) => {
-      const content: Record<string, string | number | boolean | string[]> = {};
+      // Entries, not assignments: a property named __proto__ must stay an answer, not set a prototype.
+      const content: Array<[string, string | number | boolean | string[]]> = [];
       for (const field of fields) {
         const answer = answers[field.questionId];
         const values = (Array.isArray(answer) ? answer : answer === undefined ? [] : [answer]).map((entry) => entry.trim()).filter(Boolean);
@@ -119,9 +120,9 @@ export const readElicitationForm = (raw: unknown): ElicitationForm | null => {
           if (field.required) return { action: "cancel" };
           continue;
         }
-        content[field.key] = typed;
+        content.push([field.key, typed]);
       }
-      return { action: "accept", content };
+      return { action: "accept", content: Object.fromEntries(content) };
     },
   };
 };

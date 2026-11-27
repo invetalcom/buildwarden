@@ -211,6 +211,12 @@ describe("ACP form elicitation", () => {
     expect(form.respond({ field_0: "Ocean" })).toEqual({ action: "accept", content: { color: "blue" } });
     expect(choices([{ const: "a", title: "Same" }, { const: "b", title: "Same" }])).toBeNull();
   });
+
+  it("keeps an answer whose schema property is named __proto__", () => {
+    const form = readElicitationForm(JSON.parse('{"mode":"form","requestedSchema":{"required":["__proto__"],"properties":{"__proto__":{"type":"string"}}}}'))!;
+    const response = form.respond({ field_0: "kept" });
+    expect(JSON.stringify(response)).toBe('{"action":"accept","content":{"__proto__":"kept"}}');
+  });
 });
 
 describe("ACP saved sessions", () => {
