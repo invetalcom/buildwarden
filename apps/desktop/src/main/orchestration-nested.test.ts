@@ -195,6 +195,22 @@ describe("nested delegation", () => {
     expect(db.getOrchestrationByCoordinatorRunId(child.id)).toBeNull();
   });
 
+  it("deletes a grandchild together with the whole tree, from its top-level run", async () => {
+    const { db, controller, orchestration, root, addChild } = await fixture(2);
+    const top = orchestration.getOrCreateOrchestration(root);
+    const { child } = addChild(top, root, "c1");
+    const { child: grandchild } = addChild(orchestration.getOrCreateOrchestration(child), child, "g1");
+    for (const run of [root, child, grandchild]) db.updateRunStatus(run.id, "completed", { summary: null });
+    const impact = await serviceOf(controller, "runDeletion").getRunDeletionImpact(grandchild.id);
+    expect(impact).toMatchObject({ coordinatorRunId: root.id, orchestrationId: top.id });
+    expect(impact.runIds).toEqual(expect.arrayContaining([root.id, child.id, grandchild.id]));
+    // The run page deletes the impact's coordinator; deleting the grandchild itself names the top run.
+    await expect(controller.deleteRun(grandchild.id)).rejects.toThrow(`Delete coordinator run ${root.id} instead`);
+    await controller.deleteRun(impact.coordinatorRunId);
+    expect(() => db.getRun(root.id)).toThrow();
+    expect(() => db.getRun(grandchild.id)).toThrow();
+  });
+
   it("lets a run kept for later anywhere in a nested tree protect the tree from data-retention cleanup", async () => {
     const { db, controller, orchestration, root, addChild } = await fixture(2);
     const top = orchestration.getOrCreateOrchestration(root);

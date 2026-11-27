@@ -50,12 +50,29 @@ export class RunDeletionService extends AppService<
     }
   }
 
+  /** The orchestration at the top of a delegation tree: the one whose coordinator no task owns. */
+  private topOrchestration(orchestration: OrchestrationRecord): OrchestrationRecord {
+    let top = orchestration;
+    for (let depth = 0; depth < 16; depth += 1) {
+      const parentTask = this.db.getOrchestrationTaskByChildRunId(top.coordinatorRunId);
+      if (!parentTask) break;
+      try {
+        top = this.db.getOrchestration(parentTask.orchestrationId);
+      } catch {
+        break;
+      }
+    }
+    return top;
+  }
+
   async getRunDeletionImpact(runId: string): Promise<RunDeletionImpact> {
     this.db.getRun(runId);
     const childTask = this.db.getOrchestrationTaskByChildRunId(runId);
-    const orchestration = childTask
+    const own = childTask
       ? this.db.getOrchestration(childTask.orchestrationId)
       : this.db.getOrchestrationByCoordinatorRunId(runId);
+    // A grandchild's coordinator is a delegated run itself; the tree is deleted from its top.
+    const orchestration = own ? this.topOrchestration(own) : null;
     const coordinatorRunId = orchestration?.coordinatorRunId ?? runId;
     // With nested delegation a child coordinates an orchestration of its own; the tree goes together.
     const orchestrations = orchestration ? [orchestration] : [];
@@ -335,7 +352,7 @@ export class RunDeletionService extends AppService<
         /* Treat an orphaned task reference as stale and delete the surviving run normally. */
       }
       if (owner) {
-        throw new Error(`This run is owned by an orchestration. Delete coordinator run ${owner.coordinatorRunId} instead.`);
+        throw new Error(`This run is owned by an orchestration. Delete coordinator run ${this.topOrchestration(owner).coordinatorRunId} instead.`);
       }
     }
     await this.services.council.deleteCouncilChildren(run);
