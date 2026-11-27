@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { BuildWardenDatabase } from "@buildwarden/db";
 import type { OrchestrationRecord, OrchestrationTaskRecord, RunDeletionImpact, RunRecord } from "@buildwarden/shared";
 import { AGENT_ACTIVITY_EVENT_TYPES } from "../orchestration-delivery";
+import { ORCHESTRATION_TERMINAL_TASK_STATUSES } from "../orchestration-runtime-actions";
 import { recoverOrchestrationAdoption, removeOwnedOrchestrationArtifact } from "../orchestration-workspace";
 import { AppService } from "./app-service";
 import { SELECTED_PROJECT_KEY, SELECTED_RUN_KEY, SESSION_INTERRUPTED_MESSAGE } from "./app-service-constants";
@@ -46,6 +47,14 @@ export class OrchestrationRecoveryService extends AppService<
     const childIds = runIds.filter((id) => id !== coordinator.id);
     const orderedRunIds = [...childIds, coordinator.id];
     try {
+      // A task on a linked host has no run here to delete. Its host run is stopped first; while the
+      // host cannot confirm, the deletion fails and stays retryable, so the host run is not orphaned.
+      const nestedOrchestrationIds = Array.isArray(impact.nestedOrchestrationIds) ? impact.nestedOrchestrationIds : [];
+      for (const id of [orchestration.id, ...nestedOrchestrationIds]) {
+        for (const task of this.db.listOrchestrationTasks(id)) {
+          if (task.remote?.runId && !ORCHESTRATION_TERMINAL_TASK_STATUSES.has(task.status)) await this.services.orchestrationRemote.cancelRemoteRun(task);
+        }
+      }
       for (const id of orderedRunIds) {
         await this.services.processes.stopRunOwnedProcesses(id);
       }

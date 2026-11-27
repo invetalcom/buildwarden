@@ -214,6 +214,24 @@ describe("delegating to a linked host", () => {
     expect(taskByClientId("t9").status).toBe("cancelled");
   });
 
+  it("stops the host's run before the coordinator is deleted, and keeps the deletion retryable while the host is away", async () => {
+    const { db, controller, host, delegate, taskByClientId, coordinator } = await setup();
+    await delegate("t10");
+    await vi.waitFor(() => expect(taskByClientId("t10").status).toBe("running"));
+    const linkedHosts = serviceOf(controller, "linkedHosts");
+    const call = linkedHosts.callHostTool.bind(linkedHosts);
+    const offline = vi.spyOn(linkedHosts, "callHostTool").mockImplementation(async (hostId, name, args, signal) => {
+      if (name === "cancel_run") throw new Error("connect ECONNREFUSED");
+      return call(hostId, name, args, signal) as never;
+    });
+    await expect(controller.deleteRun(coordinator.id)).rejects.toThrow();
+    expect(db.getRun(coordinator.id)).toBeDefined();
+    offline.mockRestore();
+    await controller.deleteRun(coordinator.id);
+    expect(host.cancelled).toEqual(["host-run-1"]);
+    expect(() => db.getRun(coordinator.id)).toThrow();
+  });
+
   it("stops the host's run when the task was cancelled while the host was starting it", async () => {
     const { db, controller, host, delegate, taskByClientId } = await setup();
     const linkedHosts = serviceOf(controller, "linkedHosts");
