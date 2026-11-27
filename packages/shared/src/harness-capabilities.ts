@@ -97,8 +97,11 @@ const capabilities: Record<ProviderType, Readonly<HarnessCapabilities>> = {
  */
 const unknownProviderCapabilities: HarnessCapabilities = { ...apiCapabilities, taskExecutionOptions: [] };
 
+/** Whether this version has an integration for a stored provider type. Nothing may run for one it lacks. */
+export const isKnownProviderType = (providerType: string): providerType is ProviderType => Object.hasOwn(capabilities, providerType);
+
 export const getHarnessCapabilities = (providerType: ProviderType): Readonly<HarnessCapabilities> =>
-  Object.hasOwn(capabilities, providerType) ? capabilities[providerType] : unknownProviderCapabilities;
+  isKnownProviderType(providerType) ? capabilities[providerType] : unknownProviderCapabilities;
 
 /**
  * What a live session reported about itself when it started. Static capabilities describe the

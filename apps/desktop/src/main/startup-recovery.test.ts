@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { BuildWardenDatabase } from "@buildwarden/db";
-import { getHarnessCapabilities, type ProviderType } from "@buildwarden/shared";
+import { APP_SETTING_KEYS, getHarnessCapabilities, type ProviderType } from "@buildwarden/shared";
 import { AppController } from "./app-controller";
 import { serviceOf } from "./controller-test-internals";
 import { HostEventBus } from "./host-events";
@@ -21,10 +21,10 @@ const fixture = async () => {
   const dir = await mkdtemp(join(tmpdir(), "bw-startup-recovery-")); dirs.push(dir);
   const db = new BuildWardenDatabase(join(dir, "state.sqlite")); databases.push(db); await db.init();
   const project = db.addProject({ repoPath: dir, baseBranch: "main", resolvedName: "Project" });
-  const addRun = (providerType: ProviderType, prompt: string) => {
+  const addRun = (providerType: ProviderType, prompt: string, extra: Partial<Parameters<BuildWardenDatabase["createRun"]>[0]> = {}) => {
     const provider = db.addProviderAccount({ providerType, label: prompt, apiBaseUrl: null, apiKeyRef: "key", configJson: "{}" });
     const model = db.addModel({ providerAccountId: provider.id, modelId: "test", displayName: "Test", config: {}, capabilities: {}, enabled: true });
-    const run = db.createRun({ projectId: project.id, providerAccountId: provider.id, modelId: model.id, harnessType: "codex-app-server", mode: "code", workspaceType: "local", prompt, branchName: "main", worktreePath: dir });
+    const run = db.createRun({ projectId: project.id, providerAccountId: provider.id, modelId: model.id, harnessType: "codex-app-server", mode: "code", workspaceType: "local", prompt, branchName: "main", worktreePath: dir, ...extra });
     return { provider, model, run };
   };
   const secrets = { readSecret: vi.fn(async (): Promise<string | null> => null), saveSecret: async () => undefined, deleteSecret: async () => undefined };
@@ -116,6 +116,39 @@ describe("startup recovery", () => {
     const capabilities = getHarnessCapabilities("retired-provider" as ProviderType);
     expect(capabilities).toMatchObject({ nativeSessionResume: false, liveSteering: false, taskExecutionOptions: [] });
     expect(getHarnessCapabilities("constructor" as ProviderType).nativeSessionResume).toBe(false);
+  });
+
+  it("refuses to start a run or chat worker for an unknown provider type", async () => {
+    const { db, controller, addRun } = await fixture();
+    const { run, provider, model } = addRun("retired-provider" as ProviderType, "Unknown provider");
+    const chat = db.createChat(provider.id, model.id, "Chat");
+
+    await expect(serviceOf(controller, "runWorkerHost").startWorker(run, provider, model, "", undefined))
+      .rejects.toThrow("does not support (retired-provider)");
+    await expect(serviceOf(controller, "chatWorkerHost").startChatWorker(chat, provider, model, "", undefined))
+      .rejects.toThrow("does not support (retired-provider)");
+  });
+
+  it("blocks an interrupted orchestration child whose provider type is unknown instead of restarting it", async () => {
+    const { db, controller, addRun } = await fixture();
+    db.setSetting(APP_SETTING_KEYS.sessionTitlesEnabled, "false");
+    const { run: root } = addRun("codex-cli", "Coordinate", { delegationEnabled: true });
+    const orchestration = serviceOf(controller, "orchestration").getOrCreateOrchestration(root);
+    const wave = db.createOrchestrationWave(orchestration.id);
+    const task = db.createOrchestrationTask({
+      orchestrationId: orchestration.id, waveId: wave.id, clientTaskId: "c1", title: "c1", prompt: "Part", roleId: "general", modelId: root.modelId, intent: "inspect",
+    });
+    const { run: child } = addRun("retired-provider" as ProviderType, "Part", {
+      kind: "orchestration-task", parentRunId: root.id, rootRunId: root.id, orchestrationTaskId: task.id,
+    });
+    db.updateRunStatus(child.id, "running");
+    db.updateOrchestrationTask(task.id, { childRunId: child.id, status: "running" });
+    const restart = vi.spyOn(serviceOf(controller, "orchestrationDispatch"), "restartOrchestrationChildFromBeginning");
+
+    await controller.reconcileOrchestrationsAfterRestart();
+
+    expect(restart).not.toHaveBeenCalled();
+    expect(db.getOrchestrationTask(task.id)).toMatchObject({ status: "blocked", attentionReason: expect.stringContaining("does not support (retired-provider)") });
   });
 
   const startupController = () => ({
