@@ -89,7 +89,14 @@ export class OrchestrationRuntimeActions {
     if (task.childRunId) await this.cancelRun(task.childRunId);
     if (task.remote) await this.cancelRemoteRun(task);
     this.db.transaction(() => {
-      this.db.updateOrchestrationTask(task.id, { status: "cancelled", deferredUntil: null, finishedAt: new Date().toISOString(), attentionReason: null });
+      // A host may be creating a run for this task right now. Its id is not known yet, so the
+      // pending stop is saved without one; a crash before the start records it then still warns.
+      const current = this.db.findOrchestrationTask(task.id);
+      const starting = current?.status === "provisioning" && current.remote && !current.remote.runId ? current.remote : null;
+      this.db.updateOrchestrationTask(task.id, {
+        status: "cancelled", deferredUntil: null, finishedAt: new Date().toISOString(), attentionReason: null,
+        ...(starting ? { remote: { ...starting, stopPending: true } } : {}),
+      });
       // Messages may have been queued after the cancellation intent was recorded.
       for (const message of this.db.listOrchestrationTaskMessages(task.orchestrationId)) {
         if (message.taskId === task.id && message.status === "queued") this.db.updateOrchestrationTaskMessage(message.id, "failed");

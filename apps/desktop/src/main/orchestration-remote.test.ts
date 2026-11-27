@@ -310,7 +310,8 @@ describe("delegating to a linked host", () => {
     });
     const update = db.updateOrchestrationTask.bind(db);
     vi.spyOn(db, "updateOrchestrationTask").mockImplementation((id, fields) => {
-      if (fields.remote?.stopPending) throw new Error("disk full");
+      // Only the save that records the late host run fails; the cancellation itself is saved.
+      if (fields.remote?.stopPending && fields.remote.runId) throw new Error("disk full");
       return update(id, fields);
     });
     await delegate("t17");
@@ -342,7 +343,7 @@ describe("delegating to a linked host", () => {
     });
     const update = db.updateOrchestrationTask.bind(db);
     vi.spyOn(db, "updateOrchestrationTask").mockImplementation((id, fields) => {
-      if (fields.remote?.stopPending && storageDown) throw new Error("disk full");
+      if (fields.remote?.stopPending && fields.remote.runId && storageDown) throw new Error("disk full");
       return update(id, fields);
     });
     const unsavedStops = (remote as unknown as { unsavedStops: Map<string, unknown> }).unsavedStops;
@@ -358,6 +359,56 @@ describe("delegating to a linked host", () => {
     await remote.pollRemoteTasks();
     expect(host.cancelled).toEqual(["host-run-1"]);
     expect(taskByClientId("t19").remote).toMatchObject({ stopPending: false });
+  });
+
+  it("saves a cancellation during the start durably, and warns after a restart that lost the host's answer", async () => {
+    const { db, controller, delegate, taskByClientId, remote } = await setup();
+    const linkedHosts = serviceOf(controller, "linkedHosts");
+    const call = linkedHosts.callHostTool.bind(linkedHosts);
+    let failStart: () => void = () => undefined;
+    const startHeld = new Promise<void>((resolve) => { failStart = resolve; });
+    vi.spyOn(linkedHosts, "callHostTool").mockImplementation(async (hostId, name, args, signal) => {
+      if (name === "start_run") {
+        await startHeld;
+        throw new Error("connection reset");
+      }
+      return await call(hostId, name, args, signal) as never;
+    });
+    await delegate("t24");
+    await vi.waitFor(() => expect(taskByClientId("t24").status).toBe("provisioning"));
+    const task = taskByClientId("t24");
+    await serviceOf(controller, "orchestration").cancelOrchestrationTasks(db.getOrchestration(task.orchestrationId), [task.id]);
+    expect(taskByClientId("t24")).toMatchObject({ status: "cancelled", remote: { runId: null, stopPending: true } });
+    // While the start is under way, it owns the pending stop.
+    await remote.pollRemoteTasks();
+    expect(db.listOrchestrationEvents(task.orchestrationId).filter((event) => event.taskId === task.id && event.type === "attention")).toEqual([]);
+    // A restarted app has no start under way: the host's answer is lost, so the user is told.
+    (remote as unknown as { starting: Set<string> }).starting.clear();
+    await remote.pollRemoteTasks();
+    expect(taskByClientId("t24")).toMatchObject({ status: "cancelled", remote: { stopPending: false }, attentionReason: expect.stringContaining("Check that host") });
+    expect(db.listOrchestrationEvents(task.orchestrationId).some((event) => event.taskId === task.id && event.type === "attention" && event.content.includes("Check that host"))).toBe(true);
+    // Let the held start end before the test's database closes.
+    const resolveStartStop = vi.spyOn(remote as unknown as { resolveStartStop: (task: unknown, warn: boolean) => Promise<void> }, "resolveStartStop");
+    failStart();
+    await vi.waitFor(() => expect(resolveStartStop).toHaveBeenCalledWith(expect.anything(), false));
+    await resolveStartStop.mock.results.at(-1)?.value;
+  });
+
+  it("drops the pending stop of a task cancelled during a start the host refused", async () => {
+    const { db, controller, delegate, taskByClientId, remote } = await setup();
+    const linkedHosts = serviceOf(controller, "linkedHosts");
+    const call = linkedHosts.callHostTool.bind(linkedHosts);
+    vi.spyOn(linkedHosts, "callHostTool").mockImplementation(async (hostId, name, args, signal) => {
+      if (name === "start_run") {
+        const task = taskByClientId("t25");
+        await serviceOf(controller, "orchestration").cancelOrchestrationTasks(db.getOrchestration(task.orchestrationId), [task.id]);
+        throw new Error("project is archived");
+      }
+      return await call(hostId, name, args, signal) as never;
+    });
+    await delegate("t25");
+    await vi.waitFor(() => expect(remote.isStarting(taskByClientId("t25").id)).toBe(false));
+    expect(taskByClientId("t25")).toMatchObject({ status: "cancelled", remote: { runId: null, stopPending: false }, attentionReason: null });
   });
 
   it("does not delete the coordinator while a host run's unsaved stop is unconfirmed", async () => {
@@ -376,7 +427,8 @@ describe("delegating to a linked host", () => {
     });
     const update = db.updateOrchestrationTask.bind(db);
     vi.spyOn(db, "updateOrchestrationTask").mockImplementation((id, fields) => {
-      if (fields.remote?.stopPending) throw new Error("disk full");
+      // Only the save that records the late host run fails; the cancellation itself is saved.
+      if (fields.remote?.stopPending && fields.remote.runId) throw new Error("disk full");
       return update(id, fields);
     });
     const unsavedStops = (remote as unknown as { unsavedStops: Map<string, unknown> }).unsavedStops;

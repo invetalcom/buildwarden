@@ -2541,7 +2541,11 @@ export interface OrchestrationTaskRemote {
   runId: string | null;
   /** The host's request the run waits for, as last seen. */
   waitingFor?: "approval" | "input" | null;
-  /** The task ended here, but its host has not confirmed yet that the run stopped; polling retries. */
+  /**
+   * The task ended here, but its host has not confirmed yet that the run stopped; polling retries.
+   * Without a runId, the task was cancelled while its host was starting the run: once no start
+   * owns it any more, polling tells the user to check the host for that run.
+   */
   stopPending?: boolean;
 }
 

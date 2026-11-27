@@ -158,6 +158,8 @@ export class OrchestrationRemoteService extends AppService<"linkedHosts" | "orch
       const message = error instanceof Error ? error.message : String(error);
       if (!startedRemote) {
         await this.settle(task.id, { status: "failed", summary: null, errorMessage: `${remote.hostLabel} could not start the task: ${message}` });
+        // A cancellation during the start saved a stop for a run the host did not create.
+        await this.resolveStartStop(task, false);
         return;
       }
       // The host runs the task, but BuildWarden could not record it. The task fails here, and its
@@ -248,7 +250,10 @@ export class OrchestrationRemoteService extends AppService<"linkedHosts" | "orch
       this.stopPolling();
       return;
     }
-    for (const task of awaitingStop) await this.retryPendingStop(task);
+    for (const task of awaitingStop) {
+      if (task.remote?.runId) await this.retryPendingStop(task);
+      else await this.resolveStartStop(task, true);
+    }
     for (const [taskId, unsaved] of [...this.unsavedStops]) {
       // Once saved, the stop is a durable obligation like any other and survives a restart.
       if (await this.retrySave(unsaved.save, taskId)) this.unsavedStops.delete(taskId);
@@ -339,6 +344,35 @@ export class OrchestrationRemoteService extends AppService<"linkedHosts" | "orch
     } catch (error) {
       this.logControllerWarn("Still cannot save the pending stop of a remote task's host run.", { taskId, error });
       return false;
+    }
+  }
+
+  /**
+   * Settles the pending stop a cancellation saved while the task's host was starting its run, which
+   * has no run id. A start still under way, or a stop held in memory, owns it. Otherwise the start
+   * ended without recording a run: after a failed start request (`warn` false) the host made none,
+   * and after a restart (`warn` true) it may have, so the user is told to check that host.
+   */
+  private async resolveStartStop(task: OrchestrationTaskRecord, warn: boolean): Promise<void> {
+    try {
+      await this.services.orchestration.withOrchestrationMutation(task.orchestrationId, async () => {
+        const current = this.db.findOrchestrationTask(task.id);
+        const remote = current?.remote;
+        if (!current || !remote?.stopPending || remote.runId) return;
+        if (warn && (this.starting.has(task.id) || this.unsavedStops.has(task.id))) return;
+        const reason = warn
+          ? `BuildWarden stopped while starting this cancelled task on ${remote.hostLabel}. Check that host for a run and stop it there.`
+          : null;
+        this.db.transaction(() => {
+          this.db.updateOrchestrationTask(task.id, { remote: { ...remote, stopPending: false }, ...(reason ? { attentionReason: reason } : {}) });
+          if (reason) this.db.appendOrchestrationEvent({ orchestrationId: task.orchestrationId, taskId: task.id, type: "attention", title: current.title, content: reason });
+        });
+        await this.db.flushDurable();
+        if (reason) await this.services.orchestrationCoordinator.maybeWakeOrchestrationCoordinator(task.orchestrationId);
+        this.services.orchestration.emitOrchestrationChanged(task.orchestrationId, task.id);
+      });
+    } catch (error) {
+      this.logControllerWarn("Could not settle the pending stop of a remote task cancelled during its start.", { taskId: task.id, error });
     }
   }
 
