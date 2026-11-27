@@ -6056,6 +6056,18 @@ export const REMOTE_ACCESS_PROTOCOL_VERSION = 1 as const;
 export const REMOTE_ACCESS_MIN_PROTOCOL_VERSION = 1 as const;
 export const REMOTE_ACCESS_LOOPBACK_HOST = "127.0.0.1" as const;
 export const DEFAULT_REMOTE_ACCESS_PORT = 47_831;
+/** Ports tried after the preferred one is taken; `0` lets the system pick any free port. */
+export const remoteAccessAlternativePorts = (preferredPort: number): number[] => [
+  ...Array.from({ length: 10 }, (_, index) => DEFAULT_REMOTE_ACCESS_PORT + index).filter((port) => port !== preferredPort),
+  0,
+];
+/** The loopback port this data directory used last, or the default when none was saved. */
+export const parseRemoteAccessPortSetting = (value: string | undefined): number => {
+  const port = Number(value);
+  return Number.isInteger(port) && port >= 1 && port <= 65_535 ? port : DEFAULT_REMOTE_ACCESS_PORT;
+};
+/** HTTPS ports Tailscale Funnel accepts, in the order BuildWarden tries them. */
+export const TAILSCALE_HTTPS_PORTS = [443, 8443, 10_000] as const;
 export const REMOTE_ACCESS_HEALTH_PATH = "/health" as const;
 export const REMOTE_ACCESS_LEGACY_HEALTH_PATH = "/api/v1/health" as const;
 export const REMOTE_ACCESS_INFO_PATH = "/api/v1/info" as const;
@@ -6173,7 +6185,11 @@ export const parseRemoteAccessExposure = (settings: Record<string, string>): Rem
 export interface RemoteAccessStatus {
   enabled: boolean;
   loopbackUrl: string | null;
+  /** Why the loopback server is not listening although remote access is on. Absent on older hosts. */
+  serverError?: string | null;
   tailscale: {
+    /** HTTPS port of the endpoint on this host's Tailscale name (443, 8443 or 10000). Absent on older hosts. */
+    httpsPort?: number | null;
     desired: boolean;
     /** Optional for compatibility with older remote hosts. */
     requestedExposure?: RemoteAccessExposure;
@@ -7058,6 +7074,10 @@ export const APP_SETTING_KEYS = {
   remoteAccessTailscaleManagedHost: "remoteAccess.tailscaleManagedHost",
   /** Internal ownership marker for the loopback proxy target. */
   remoteAccessTailscaleManagedTarget: "remoteAccess.tailscaleManagedTarget",
+  /** Internal ownership marker for the HTTPS port of that handler. Absent means 443. */
+  remoteAccessTailscaleManagedHttpsPort: "remoteAccess.tailscaleManagedHttpsPort",
+  /** Internal: loopback port the remote access server used last, kept so its Tailscale target stays stable. */
+  remoteAccessPort: "remoteAccess.port",
   /** JSON string array of welcome/onboarding check ids that have been satisfied at least once. */
   welcomeCompletedCheckIds: "welcomeCompletedCheckIds",
 } as const;

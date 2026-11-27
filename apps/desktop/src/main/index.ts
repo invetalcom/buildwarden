@@ -37,7 +37,9 @@ import {
   parseSupportedIdeKind,
   parseRemoteAccessEnabledSetting,
   parseRemoteAccessExposure,
+  parseRemoteAccessPortSetting,
   parseRemoteAccessWebOriginsSetting,
+  remoteAccessAlternativePorts,
   normalizeRemoteAccessWebOrigin,
   parseDesignScheme,
   parseDesignSchemeJson,
@@ -1625,6 +1627,8 @@ const bootstrap = async (): Promise<void> => {
   };
 
   let remoteAccessServer: RemoteAccessServer | null = null;
+  /** Why the server is not listening although remote access is on; shown in Settings → Network. */
+  let remoteAccessServerError: string | null = null;
   let remoteAccessSync = Promise.resolve();
   let appShutdownStarted = false;
   let appShutdownComplete = false;
@@ -1637,7 +1641,8 @@ const bootstrap = async (): Promise<void> => {
     }
     remoteAccessSync = remoteAccessSync.catch(() => undefined).then(async () => {
       if (!isRemoteAccessEnabled()) {
-        const tailscaleStatus = await tailscaleServe.disable();
+        remoteAccessServerError = null;
+        const tailscaleStatus = await tailscaleServe.disable(remoteAccessServer?.getInfo()?.port ?? null);
         if (tailscaleStatus.state === "error") {
           const loopbackServerBound = Boolean(remoteAccessServer?.getInfo());
           logWarn(loopbackServerBound
@@ -1659,10 +1664,16 @@ const bootstrap = async (): Promise<void> => {
         return;
       }
       if (!remoteAccessServer?.getInfo()) {
+        // `serve --port` is exact. Otherwise this data directory keeps the port it used last, and
+        // takes the next free one when another program (often a second BuildWarden) holds it.
+        const explicitPort = currentLaunch.kind === "serve" ? currentLaunch.port : null;
+        const savedPort = db.getSettings()[APP_SETTING_KEYS.remoteAccessPort];
+        const preferredPort = explicitPort ?? parseRemoteAccessPortSetting(savedPort);
         try {
           remoteAccessServer = new RemoteAccessServer({
             appVersion: app.getVersion(),
-            ...(currentLaunch.kind === "serve" && currentLaunch.port !== null ? { port: currentLaunch.port } : {}),
+            port: preferredPort,
+            alternativePorts: explicitPort === null ? remoteAccessAlternativePorts(preferredPort) : [],
             operations: remoteOperations,
             auth: await ensureRemoteAuthService(),
             staticRoot: join(app.getAppPath(), "out", "web"),
@@ -1672,7 +1683,7 @@ const bootstrap = async (): Promise<void> => {
             resolveVisualReplyFrame: (ticket) => controller.resolveVisualReplyFrameTicket(ticket),
             mcp: new OutsideAgentMcp(remoteOperations, { serverVersion: app.getVersion() }),
             trustedProxyHosts: () => {
-              const host = tailscaleServe.getManagedHost();
+              const host = tailscaleServe.getTrustedProxyAuthority();
               return host ? [host] : [];
             },
             trustedWebOrigins: () =>
@@ -1680,12 +1691,18 @@ const bootstrap = async (): Promise<void> => {
             onServerError: (error) => logError("Remote access server request failed.", { error }),
           });
           const info = await remoteAccessServer.start();
+          remoteAccessServerError = null;
+          if (explicitPort === null && savedPort !== String(info.port)) db.setSetting(APP_SETTING_KEYS.remoteAccessPort, String(info.port));
           logInfo("Remote access server started in loopback-only mode.", {
             baseUrl: info.baseUrl,
             authentication: "session",
+            ...(info.port !== preferredPort ? { preferredPortInUse: preferredPort } : {}),
           });
         } catch (error) {
-          const tailscaleStatus = await tailscaleServe.disable();
+          remoteAccessServerError = (error as NodeJS.ErrnoException).code === "EADDRINUSE"
+            ? `Port ${String(preferredPort)} is already used by another program${explicitPort === null ? ", and no other port was free" : ""}.`
+            : `The remote access server could not start: ${error instanceof Error ? error.message : String(error)}`;
+          const tailscaleStatus = await tailscaleServe.disable(null);
           if (tailscaleStatus.state === "error") {
             logWarn("Remote access server startup failed and its previous Tailscale exposure could not be removed.", {
               message: tailscaleStatus.message,
@@ -1702,7 +1719,7 @@ const bootstrap = async (): Promise<void> => {
       const tailscaleDesired = parseRemoteAccessExposure(db.getSettings()) !== "local";
       const tailscaleStatus = tailscaleDesired
         ? await tailscaleServe.enable(serverInfo.port)
-        : await tailscaleServe.disable();
+        : await tailscaleServe.disable(serverInfo.port);
       if (tailscaleStatus.verified) {
         logInfo("BuildWarden Tailscale exposure verified.", { endpoint: tailscaleStatus.endpoint });
       } else if (tailscaleStatus.state === "error" || (tailscaleDesired && tailscaleStatus.state !== "available")) {
@@ -1723,6 +1740,7 @@ const bootstrap = async (): Promise<void> => {
     return {
       enabled: isRemoteAccessEnabled(),
       loopbackUrl: getLoopbackUrl(),
+      serverError: info ? null : remoteAccessServerError,
       tailscale: await tailscaleServe.getStatus(info?.port ?? null),
     };
   };

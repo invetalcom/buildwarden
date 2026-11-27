@@ -904,8 +904,12 @@ const isAllowedHostHeader = (
     const hostname = url.hostname.toLowerCase();
     const loopback = hostname === REMOTE_ACCESS_LOOPBACK_HOST || hostname === "localhost" || hostname === "[::1]";
     if (loopback) return expectedPort === undefined || url.port === String(expectedPort);
-    const trustedProxy = trustedProxyHosts.some((candidate) => candidate.toLowerCase() === hostname);
-    return trustedProxy && (url.port === "" || url.port === "443");
+    // An HTTPS authority: a host on 443 is matched with or without its port, other ports must match.
+    const authority = new URL(`https://${hostHeader}`);
+    return trustedProxyHosts.some((candidate) => {
+      const trusted = new URL(`https://${candidate}`);
+      return trusted.hostname.toLowerCase() === hostname && trusted.port === authority.port;
+    });
   } catch {
     return false;
   }
@@ -968,9 +972,11 @@ export interface RemoteAccessServerOptions {
   staticRoot?: string;
   events?: RemoteHostEventSource;
   port?: number;
+  /** Ports tried in order when `port` is already in use. Empty or absent makes a taken port fatal. */
+  alternativePorts?: readonly number[];
   capabilities?: RemoteAccessServerCapability[];
   authentication?: RemoteAccessHealth["authentication"];
-  /** Exact MagicDNS hosts whose HTTPS traffic is forwarded by a verified loopback-only proxy. */
+  /** Exact MagicDNS hosts, with `:port` unless it is 443, whose HTTPS traffic a verified loopback-only proxy forwards. */
   trustedProxyHosts?: () => readonly string[];
   /** Exact hosted HTTPS origins allowed to call the API through that proxy. */
   trustedWebOrigins?: () => readonly string[];
@@ -1351,23 +1357,28 @@ export class RemoteAccessServer {
     webSocketServer.on("error", (error) => this.options.onServerError?.(error));
     server.on("upgrade", (request, socket, head) => this.handleUpgrade(request, socket, head, webSocketServer, startedAt));
 
-    try {
-      await new Promise<void>((resolve, reject) => {
-        const handleError = (error: Error) => {
-          server.off("listening", handleListening);
-          reject(error);
-        };
-        const handleListening = () => {
-          server.off("error", handleError);
-          resolve();
-        };
-        server.once("error", handleError);
-        server.once("listening", handleListening);
-        server.listen(this.options.port ?? DEFAULT_REMOTE_ACCESS_PORT, REMOTE_ACCESS_LOOPBACK_HOST);
-      });
-    } catch (error) {
-      webSocketServer.close();
-      throw error;
+    const ports = [this.options.port ?? DEFAULT_REMOTE_ACCESS_PORT, ...(this.options.alternativePorts ?? [])];
+    for (const [index, port] of ports.entries()) {
+      try {
+        await new Promise<void>((resolve, reject) => {
+          const handleError = (error: Error) => {
+            server.off("listening", handleListening);
+            reject(error);
+          };
+          const handleListening = () => {
+            server.off("error", handleError);
+            resolve();
+          };
+          server.once("error", handleError);
+          server.once("listening", handleListening);
+          server.listen(port, REMOTE_ACCESS_LOOPBACK_HOST);
+        });
+        break;
+      } catch (error) {
+        if (index < ports.length - 1 && (error as NodeJS.ErrnoException).code === "EADDRINUSE") continue;
+        webSocketServer.close();
+        throw error;
+      }
     }
 
     const address = server.address() as AddressInfo;

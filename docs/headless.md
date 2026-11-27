@@ -46,7 +46,7 @@ Commands talk to the running host through a socket that only the same user can o
 
 | Command | |
 | --- | --- |
-| `serve [--port <number>] [--run-missed]` | Run the host in the foreground (default port 47831) |
+| `serve [--port <number>] [--run-missed]` | Run the host in the foreground (default port 47831, or the next free one) |
 | `status [--json]` | Address, exposure, paired devices, active work, data and log folders |
 | `doctor` | Check the host, Git, agent tools, models, disk and service; exits with 1 when something is broken. Works without a running host |
 | `stop` | Stop the host |
@@ -114,7 +114,7 @@ The Linux desktop app uses the same key file when no keyring is available. Secre
 ## Troubleshooting
 
 - `service install` restarts the service without asking the running host first, so it also recovers one that hangs. It succeeds only when the service itself answers; a host that was started in another way has to be stopped first.
-- `service install` reports that the host did not start, or `serve` exits: see `journalctl --user -u buildwarden` and the log folder. A port that is already in use is fatal on a headless host.
+- `service install` reports that the host did not start, or `serve` exits: see `journalctl --user -u buildwarden` and the log folder. A port given with `--port` that is already in use is fatal; without `--port` the host takes the next free one and `buildwarden remote` shows it.
 - `No usable sandbox` or a `chrome-sandbox` message: install the `.deb` package. With the archive, run `sudo chown root chrome-sandbox && sudo chmod 4755 chrome-sandbox` in its folder.
 - To use a display server anyway, such as Xvfb, pass `--ozone-platform=x11` before `serve`.
 - The host and the desktop app cannot use the same data directory at the same time.
