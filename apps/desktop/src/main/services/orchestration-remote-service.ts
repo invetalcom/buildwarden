@@ -163,6 +163,7 @@ export class OrchestrationRemoteService extends AppService<"linkedHosts" | "orch
     }
     for (const task of tasks) {
       const remote = task.remote!;
+      if (await this.retryPendingCancellation(task)) continue;
       if (!remote.runId) {
         if (task.status === "pending") await this.startRemoteTask(task.id);
         else if (task.status === "provisioning" && !this.starting.has(task.id)) {
@@ -208,14 +209,29 @@ export class OrchestrationRemoteService extends AppService<"linkedHosts" | "orch
     });
   }
 
-  /** Stops the host's run for a cancelled task. The task is cancelled here even when the host cannot be reached. */
+  /**
+   * Stops the host's run for a cancelled task. Throws while the host cannot confirm it: the task
+   * then stays as it is, its cancellation stays pending, and polling tries again.
+   */
   async cancelRemoteRun(task: OrchestrationTaskRecord): Promise<void> {
     if (!task.remote?.runId) return;
     try {
       await this.services.linkedHosts.callHostTool(task.remote.hostId, "cancel_run", { runId: task.remote.runId });
     } catch (error) {
-      this.logControllerWarn("Could not cancel a remote task's run on its host.", { taskId: task.id, error });
+      throw new Error(`${task.remote.hostLabel} did not confirm that it stopped run ${task.remote.runId}; BuildWarden keeps trying: ${error instanceof Error ? error.message : String(error)}`);
     }
+  }
+
+  /** Retries a cancellation that the host could not confirm before. */
+  private async retryPendingCancellation(task: OrchestrationTaskRecord): Promise<boolean> {
+    if (this.db.listPendingOrchestrationEffects({ taskId: task.id, kind: "cancel-child" }).length === 0) return false;
+    try {
+      await this.services.orchestration.orchestrationRuntimeActions.cancel([task]);
+      this.services.orchestration.emitOrchestrationChanged(task.orchestrationId, task.id);
+    } catch (error) {
+      this.logControllerWarn("A linked host has not confirmed a remote task's cancellation yet.", { taskId: task.id, error });
+    }
+    return true;
   }
 
   /** Called at startup: remote tasks outlive the app, so their polling starts again. */

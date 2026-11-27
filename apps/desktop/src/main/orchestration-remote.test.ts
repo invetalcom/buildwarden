@@ -191,6 +191,29 @@ describe("delegating to a linked host", () => {
     expect(host.created).toHaveLength(1);
   });
 
+  it("keeps cancelling a remote task until its host confirms", async () => {
+    const { db, controller, host, delegate, taskByClientId, remote } = await setup();
+    await delegate("t9");
+    await vi.waitFor(() => expect(taskByClientId("t9").status).toBe("running"));
+    const linkedHosts = serviceOf(controller, "linkedHosts");
+    const call = linkedHosts.callHostTool.bind(linkedHosts);
+    const offline = vi.spyOn(linkedHosts, "callHostTool").mockImplementation(async (hostId, name, args, signal) => {
+      if (name === "cancel_run") throw new Error("connect ECONNREFUSED");
+      return call(hostId, name, args, signal) as never;
+    });
+    const task = taskByClientId("t9");
+    await expect(serviceOf(controller, "orchestration").cancelOrchestrationTasks(db.getOrchestration(task.orchestrationId), [task.id]))
+      .rejects.toThrow("did not confirm");
+    expect(taskByClientId("t9").status).toBe("running");
+    await remote.pollRemoteTasks();
+    expect(taskByClientId("t9").status).toBe("running");
+
+    offline.mockRestore();
+    await remote.pollRemoteTasks();
+    expect(host.cancelled).toEqual(["host-run-1"]);
+    expect(taskByClientId("t9").status).toBe("cancelled");
+  });
+
   it("stops the host's run when the task was cancelled while the host was starting it", async () => {
     const { db, controller, host, delegate, taskByClientId } = await setup();
     const linkedHosts = serviceOf(controller, "linkedHosts");

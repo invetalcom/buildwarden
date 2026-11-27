@@ -9,7 +9,10 @@ export class OrchestrationRuntimeActions {
   constructor(
     private readonly db: BuildWardenDatabase,
     private readonly cancelRun: (runId: string) => Promise<void>,
-    /** Stops a remote task's run on its linked host; it must not throw for an unreachable host. */
+    /**
+     * Stops a remote task's run on its linked host. It throws while the host cannot confirm, so the
+     * cancellation stays pending until it can.
+     */
     private readonly cancelRemoteRun: (task: OrchestrationTaskRecord) => Promise<void> = async () => undefined,
   ) {}
 
@@ -113,8 +116,10 @@ export class OrchestrationRuntimeActions {
       } catch (error) {
         this.db.transaction(() => {
           this.db.updateOrchestrationEffect(effect.id, { errorMessage: String(error), incrementAttempts: true });
-          if (effect.taskId && this.db.findOrchestrationTask(effect.taskId)) {
-            this.db.updateOrchestrationTask(effect.taskId, { status: "blocked", attentionReason: "Cancellation recovery failed; retry after checking the child." });
+          // A remote task keeps its pending cancellation, which polling retries until the host confirms.
+          const failedTask = effect.taskId ? this.db.findOrchestrationTask(effect.taskId) : null;
+          if (failedTask && !failedTask.remote) {
+            this.db.updateOrchestrationTask(failedTask.id, { status: "blocked", attentionReason: "Cancellation recovery failed; retry after checking the child." });
           }
         });
         await this.db.flushDurable();
