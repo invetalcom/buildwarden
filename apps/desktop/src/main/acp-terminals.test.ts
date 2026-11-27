@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -13,7 +13,8 @@ afterEach(() => {
 });
 
 const workspaceRoot = () => {
-  const root = mkdtempSync(join(tmpdir(), "buildwarden-acp-term-"));
+  // The real path: on macOS the temp folder is a symlink, and a child reports its resolved cwd.
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "buildwarden-acp-term-")));
   roots.push(root);
   const workspace = join(root, "workspace");
   mkdirSync(workspace);
