@@ -212,6 +212,22 @@ describe("ACP form elicitation", () => {
     expect(choices([{ const: "a", title: "Same" }, { const: "b", title: "Same" }])).toBeNull();
   });
 
+  it("accepts only answers within the schema's limits, and refuses limits it cannot check", () => {
+    const form = (property: Record<string, unknown>) => readElicitationForm({ mode: "form", requestedSchema: { properties: { v: property } } });
+    const count = form({ type: "integer", minimum: 1, maximum: 5 })!;
+    expect(count.respond({ field_0: "0" })).toEqual({ action: "cancel" });
+    expect(count.respond({ field_0: "5" })).toEqual({ action: "accept", content: { v: 5 } });
+    const name = form({ type: "string", minLength: 2, maxLength: 4, pattern: "^[a-z]+$" })!;
+    expect(name.respond({ field_0: "a" })).toEqual({ action: "cancel" });
+    expect(name.respond({ field_0: "ABC" })).toEqual({ action: "cancel" });
+    expect(name.respond({ field_0: "abc" })).toEqual({ action: "accept", content: { v: "abc" } });
+    expect(form({ type: "string", format: "email" })!.respond({ field_0: "nope" })).toEqual({ action: "cancel" });
+    const tags = form({ type: "array", maxItems: 1, items: { enum: ["x", "y"] } })!;
+    expect(tags.respond({ field_0: ["x", "y"] })).toEqual({ action: "cancel" });
+    expect(form({ type: "string", format: "ipv4" })).toBeNull();
+    expect(form({ type: "string", pattern: "(" })).toBeNull();
+  });
+
   it("keeps an answer whose schema property is named __proto__", () => {
     const form = readElicitationForm(JSON.parse('{"mode":"form","requestedSchema":{"required":["__proto__"],"properties":{"__proto__":{"type":"string"}}}}'))!;
     const response = form.respond({ field_0: "kept" });

@@ -21,7 +21,52 @@ interface Field {
   kind: "string" | "number" | "integer" | "boolean" | "choice" | "multi";
   required: boolean;
   choices: Choice[];
+  /** Whether an answer meets the schema's limits (bounds, lengths, pattern, format, item counts). */
+  accepts: (value: string | number | boolean | string[]) => boolean;
 }
+
+const FORMATS: Record<string, (value: string) => boolean> = {
+  email: (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value),
+  uri: (value) => URL.canParse(value),
+  date: (value) => /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(value)),
+  "date-time": (value) => /^\d{4}-\d{2}-\d{2}T/.test(value) && !Number.isNaN(Date.parse(value)),
+};
+
+/**
+ * The limits a field's schema sets, as one check; null when the schema sets one BuildWarden cannot
+ * check, so the form is not shown rather than answered with a value the agent did not allow.
+ */
+const readLimits = (schema: Record<string, unknown>): Field["accepts"] | null => {
+  const number = (key: string) => (typeof schema[key] === "number" ? schema[key] : undefined);
+  const checks: Array<(value: string | number | boolean | string[]) => boolean> = [];
+  const { minimum, maximum, exclusiveMinimum, exclusiveMaximum, minLength, maxLength, minItems, maxItems } = {
+    minimum: number("minimum"), maximum: number("maximum"), exclusiveMinimum: number("exclusiveMinimum"), exclusiveMaximum: number("exclusiveMaximum"),
+    minLength: number("minLength"), maxLength: number("maxLength"), minItems: number("minItems"), maxItems: number("maxItems"),
+  };
+  if (minimum !== undefined) checks.push((value) => typeof value !== "number" || value >= minimum);
+  if (maximum !== undefined) checks.push((value) => typeof value !== "number" || value <= maximum);
+  if (exclusiveMinimum !== undefined) checks.push((value) => typeof value !== "number" || value > exclusiveMinimum);
+  if (exclusiveMaximum !== undefined) checks.push((value) => typeof value !== "number" || value < exclusiveMaximum);
+  if (minLength !== undefined) checks.push((value) => typeof value !== "string" || [...value].length >= minLength);
+  if (maxLength !== undefined) checks.push((value) => typeof value !== "string" || [...value].length <= maxLength);
+  if (minItems !== undefined) checks.push((value) => !Array.isArray(value) || value.length >= minItems);
+  if (maxItems !== undefined) checks.push((value) => !Array.isArray(value) || value.length <= maxItems);
+  if (schema.pattern !== undefined) {
+    let pattern: RegExp;
+    try {
+      pattern = new RegExp(String(schema.pattern), "u");
+    } catch {
+      return null;
+    }
+    checks.push((value) => typeof value !== "string" || pattern.test(value));
+  }
+  if (schema.format !== undefined) {
+    const format = typeof schema.format === "string" ? FORMATS[schema.format] : undefined;
+    if (!format) return null;
+    checks.push((value) => typeof value !== "string" || format(value));
+  }
+  return (value) => checks.every((check) => check(value));
+};
 
 /** Plain `enum` values, or titled `oneOf`/`anyOf` entries, as choices. */
 const readChoices = (schema: Record<string, unknown>): Choice[] | null => {
@@ -41,7 +86,7 @@ const readChoices = (schema: Record<string, unknown>): Choice[] | null => {
 
 export interface ElicitationForm {
   request: RunUserInputRequest;
-  /** The elicitation response for the user's answers: accepted content, or a cancel when a required field is left empty. */
+  /** The elicitation response for the user's answers: accepted content, or a cancel when a required field is left empty or an answer breaks the schema's limits. */
   respond: (answers: RunUserInputAnswers) => { action: "accept"; content: Record<string, string | number | boolean | string[]> } | { action: "cancel" };
 }
 
@@ -60,7 +105,9 @@ export const readElicitationForm = (raw: unknown): ElicitationForm | null => {
     const questionId = `field_${String(index)}`;
     const header = text(value.title) ?? key;
     const question = text(value.description) ?? header;
-    const base = { key, questionId, required: required.has(key) };
+    const accepts = readLimits(value);
+    if (!accepts) return null;
+    const base = { key, questionId, required: required.has(key), accepts };
     if (value.type === "boolean") {
       fields.push({ ...base, kind: "boolean", choices: [{ value: "true", label: "Yes" }, { value: "false", label: "No" }] });
     } else if (value.type === "array") {
@@ -120,6 +167,8 @@ export const readElicitationForm = (raw: unknown): ElicitationForm | null => {
           if (field.required) return { action: "cancel" };
           continue;
         }
+        // An answer outside the schema's limits is not sent as if the agent had allowed it.
+        if (!field.accepts(typed)) return { action: "cancel" };
         content.push([field.key, typed]);
       }
       return { action: "accept", content: Object.fromEntries(content) };
