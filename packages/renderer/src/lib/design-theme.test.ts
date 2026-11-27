@@ -311,7 +311,7 @@ describe("prompt bubble options", () => {
       // Unset leaves the text at the transcript's size and shows prompts in full.
       expect(variables["--bw-prompt-text-size"]).toBe("initial");
       expect(variables["--bw-prompt-clamp"]).toBe("initial");
-      expect(designPromptAttributes(preset.customization)).toEqual({ promptStyle: "glass", promptAlign: null, promptFit: null, promptCorner: null, promptDetails: null, promptFill: null });
+      expect(designPromptAttributes(preset)).toEqual({ promptStyle: "glass", promptAlign: null, promptFit: null, promptCorner: null, promptDetails: null, promptFill: null });
     }
   });
 
@@ -335,6 +335,24 @@ describe("prompt bubble options", () => {
     expect(glass["--bw-prompt-text-size"]).toBe("15px");
     expect(glass["--bw-prompt-clamp"]).toBe("6");
     expect(glass["--bw-prompt-thumb-ratio"]).toBe("1");
+  });
+
+  it("keeps the text readable on a fill of any strength, not only on a strong one", () => {
+    // Faint and medium fills leave the theme's text color alone.
+    for (const opacity of [0.08, 0.3]) {
+      const scheme = withPrompt({ opacity });
+      expect(designSchemeCssVariables(scheme)["--bw-prompt-fg"]).toBe(base.colors.text);
+      expect(designPromptAttributes(scheme).promptFill).toBeNull();
+    }
+    // Just under the strong threshold the fill is a light gray: light text would not read on it.
+    const nearlyStrong = withPrompt({ opacity: 0.59 });
+    expect(designSchemeCssVariables(nearlyStrong)["--bw-prompt-fg"]).toBe("#071018");
+    expect(designPromptAttributes(nearlyStrong).promptFill).toBe("strong");
+    // A strong fill the theme's text still reads on keeps that color, and its own tones.
+    const tinted = withPrompt({ style: "solid", tint: 1 });
+    const dark: DesignScheme = { ...tinted, colors: { ...tinted.colors, userInput: "#123a6b" } };
+    expect(designSchemeCssVariables(dark)["--bw-prompt-fg"]).toBe(base.colors.text);
+    expect(designPromptAttributes(dark).promptFill).toBe("strong");
   });
 
   it("puts the choices that switch a rule on the document and takes them off again", () => {

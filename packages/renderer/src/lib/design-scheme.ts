@@ -14,6 +14,7 @@ import {
   parseDesignSchemeJson,
   resolveDesignPrompt,
   type DesignBackgroundImage,
+  type ResolvedDesignPrompt,
   type DesignCustomization,
   type DesignScheme,
 } from "@buildwarden/shared";
@@ -100,22 +101,41 @@ const GLOW_POSITIONS = {
   right: ["100% 0%", "100% 100%"],
 } as const;
 
-/** From this fill strength on, the bubble counts as a filled surface with its own text color. */
+/** From this fill strength on, the bubble counts as a filled surface with its own tones. */
 const PROMPT_STRONG_FILL = 0.6;
+/** Contrast the theme's text color needs on the bubble to stay its text color. */
+const PROMPT_TEXT_CONTRAST = 4.5;
+
+/** The color of the bubble's fill before its strength is applied: the text color, tinted. */
+const promptFillBase = (scheme: DesignScheme, prompt: ResolvedDesignPrompt): string => mixHex(scheme.colors.text, scheme.colors.userInput, prompt.tint);
+
+/**
+ * Text color of the bubble. The theme's text color stays while it reads on the fill as the fill
+ * looks on the page, at any fill strength. Where it does not, the text turns dark or white,
+ * whichever reads better, unless the theme's color still beats both.
+ */
+const promptForeground = (scheme: DesignScheme, prompt: ResolvedDesignPrompt): string => {
+  const { colors } = scheme;
+  const fill = mixHex(colors.background, promptFillBase(scheme, prompt), prompt.opacity);
+  const own = contrastRatio(colors.text, fill);
+  if (own >= PROMPT_TEXT_CONTRAST) return colors.text;
+  const readable = readableForeground(fill);
+  return contrastRatio(readable, fill) > own ? readable : colors.text;
+};
 
 /**
  * Tokens of the prompt bubble. The fill is the text color, mixed with the user input color as far
- * as the tint asks, at the strength of the style. A strong fill gets text that reads on it.
+ * as the tint asks, at the strength of the style.
  */
 const promptVariables = (scheme: DesignScheme): Record<string, string> => {
   const { colors } = scheme;
   const light = scheme.mode === "light";
   const prompt = resolveDesignPrompt(scheme.customization?.prompt);
-  const base = mixHex(colors.text, colors.userInput, prompt.tint);
+  const base = promptFillBase(scheme, prompt);
   const glass = prompt.style === "glass";
   return {
     "--bw-prompt-fill": rgba(base, prompt.opacity),
-    "--bw-prompt-fg": prompt.opacity >= PROMPT_STRONG_FILL ? readableForeground(mixHex(colors.background, base, prompt.opacity)) : colors.text,
+    "--bw-prompt-fg": promptForeground(scheme, prompt),
     "--bw-prompt-ring": prompt.style === "outline" ? rgba(base, 0.22 + 0.5 * prompt.tint) : "transparent",
     "--bw-prompt-backdrop": glass && prompt.blur > 0 ? `blur(${String(prompt.blur)}px) saturate(1.3)` : "none",
     "--bw-prompt-edge-top": rgba("#ffffff", glass ? (light ? 0.7 : 0.16) * prompt.edge : 0),
@@ -138,15 +158,16 @@ const promptVariables = (scheme: DesignScheme): Record<string, string> => {
  * Root attributes for the prompt options that CSS switches on, by `dataset` name. Null means the
  * attribute is absent, which is the case for every default but the style.
  */
-export const designPromptAttributes = (customization: DesignCustomization | undefined): Record<string, string | null> => {
-  const prompt = resolveDesignPrompt(customization?.prompt);
+export const designPromptAttributes = (scheme: DesignScheme): Record<string, string | null> => {
+  const prompt = resolveDesignPrompt(scheme.customization?.prompt);
   return {
     promptStyle: prompt.style,
     promptAlign: prompt.align === "left" ? "left" : null,
     promptFit: prompt.fit === "fill" ? "fill" : null,
     promptCorner: prompt.corner === "tucked" ? "tucked" : null,
     promptDetails: prompt.details === "hover" ? null : prompt.details,
-    promptFill: prompt.opacity >= PROMPT_STRONG_FILL ? "strong" : null,
+    // Also where the text had to change color: what sits in the bubble then follows that color.
+    promptFill: prompt.opacity >= PROMPT_STRONG_FILL || promptForeground(scheme, prompt) !== scheme.colors.text ? "strong" : null,
   };
 };
 
@@ -430,7 +451,7 @@ export const applyDesignSchemeToDocument = (scheme: DesignScheme, persistBrowser
     else delete target.dataset.runDock;
     // Indicator looks. Only a choice other than the app's own sets an attribute, so the rules for
     // the alternatives stay inactive for every theme that chooses nothing.
-    for (const [attribute, value] of Object.entries({ ...designIndicatorAttributes(scheme.customization, reducedMotion), ...designPromptAttributes(scheme.customization) })) {
+    for (const [attribute, value] of Object.entries({ ...designIndicatorAttributes(scheme.customization, reducedMotion), ...designPromptAttributes(scheme) })) {
       if (value === null) delete target.dataset[attribute];
       else target.dataset[attribute] = value;
     }
