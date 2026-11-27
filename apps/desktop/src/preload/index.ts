@@ -314,6 +314,7 @@ const api: DesktopApi = {
   getRemoteAccessStatus: () => invoke(IPC_CHANNELS.getRemoteAccessStatus),
   listHostDirectories: (input) => invoke(IPC_CHANNELS.listHostDirectories, input),
   createRemoteAccessPairing: (input) => invoke(IPC_CHANNELS.createRemoteAccessPairing, input),
+  createRemoteAccessAgentToken: (input) => invoke(IPC_CHANNELS.createRemoteAccessAgentToken, input),
   listRemoteAccessSessions: () => invoke(IPC_CHANNELS.listRemoteAccessSessions),
   revokeRemoteAccessSession: (sessionId: string) => invoke(IPC_CHANNELS.revokeRemoteAccessSession, sessionId),
   getNetworkProxySettings: () => invoke(IPC_CHANNELS.getNetworkProxySettings),

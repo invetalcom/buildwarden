@@ -9,6 +9,7 @@ import type {
   ProjectForgeAuthStatus,
   ProviderCliUpdateSnapshot,
   ProviderType,
+  RemoteAccessAgentToken,
   RemoteAccessExposure,
   RemoteAccessPairingGrant,
   RemoteAccessScope,
@@ -81,6 +82,7 @@ interface HostControlApi {
   status: { input: undefined; output: HostStatus };
   stop: { input: undefined; output: null };
   pair: { input: { scopes?: RemoteAccessScope[]; clientOrigin?: string }; output: RemoteAccessPairingGrant };
+  agentToken: { input: { readOnly?: boolean }; output: RemoteAccessAgentToken };
   remoteExpose: { input: { exposure: RemoteAccessExposure }; output: RemoteAccessStatus };
   remoteOrigins: { input: { add?: string; remove?: string }; output: string[] };
   listSessions: { input: undefined; output: RemoteAccessSession[] };

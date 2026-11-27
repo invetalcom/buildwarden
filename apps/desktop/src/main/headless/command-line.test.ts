@@ -89,6 +89,17 @@ describe("pair", () => {
   });
 });
 
+describe("agent-token", () => {
+  it("prints the MCP URL, the token and the Claude Code command", async () => {
+    const issued = { session: { id: "s1", scopes: ["state:read", "run:operate"], expiresAt: "2026-12-27T00:00:00Z" }, token: "tok", mcpUrl: "http://127.0.0.1:47831/mcp" };
+    const result = await run(["agent-token"], { agentToken: issued });
+    expect(result.request).toHaveBeenCalledWith("agentToken", { readOnly: false });
+    expect(result.out).toContain("claude mcp add --transport http buildwarden http://127.0.0.1:47831/mcp --header \"Authorization: Bearer tok\"");
+    expect(result.out).toContain("buildwarden sessions revoke s1");
+    expect((await run(["agent-token", "--read-only"], { agentToken: issued })).request).toHaveBeenCalledWith("agentToken", { readOnly: true });
+  });
+});
+
 describe("remote", () => {
   it("fails when the exposure could not be applied", async () => {
     const pending = await run(["remote", "expose", "private"], {

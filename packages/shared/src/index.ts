@@ -5475,6 +5475,8 @@ export interface DesktopApi {
   getRemoteAccessStatus(): Promise<RemoteAccessStatus>;
   listHostDirectories(input?: HostDirectoryBrowseInput): Promise<HostDirectoryListing>;
   createRemoteAccessPairing(input?: RemoteAccessPairingInput): Promise<RemoteAccessPairingGrant>;
+  /** Issues a revocable session for an MCP client outside the app, such as Claude Code or Codex in a terminal. */
+  createRemoteAccessAgentToken(input?: Pick<RemoteAccessPairingInput, "label" | "scopes">): Promise<RemoteAccessAgentToken>;
   listRemoteAccessSessions(): Promise<RemoteAccessSession[]>;
   revokeRemoteAccessSession(sessionId: string): Promise<void>;
   getNetworkProxySettings(): Promise<NetworkProxySettingsSnapshot>;
@@ -5916,6 +5918,8 @@ export const REMOTE_ACCESS_HEALTH_PATH = "/health" as const;
 export const REMOTE_ACCESS_LEGACY_HEALTH_PATH = "/api/v1/health" as const;
 export const REMOTE_ACCESS_INFO_PATH = "/api/v1/info" as const;
 export const REMOTE_ACCESS_RPC_PATH = "/api/v1/rpc" as const;
+/** MCP for agents outside the app, authenticated by a remote access session. */
+export const REMOTE_ACCESS_MCP_PATH = "/mcp" as const;
 export const REMOTE_ACCESS_WEBSOCKET_PATH = "/api/v1/events" as const;
 export const REMOTE_ACCESS_PAIRING_PATH = "/api/v1/auth/pair" as const;
 export const REMOTE_ACCESS_SESSION_PATH = "/api/v1/auth/session" as const;
@@ -6089,6 +6093,14 @@ export interface RemoteAccessAuditRecord {
   remoteAddress: string | null;
   details: Record<string, unknown> | null;
   createdAt: string;
+}
+
+/** A session issued directly for an agent outside the app; the token is shown once. */
+export interface RemoteAccessAgentToken {
+  session: RemoteAccessSession;
+  token: string;
+  /** Where the agent connects, through Tailscale when it is verified, else on loopback. */
+  mcpUrl: string;
 }
 
 export interface RemoteAccessPairingExchangeRequest {
@@ -6655,6 +6667,7 @@ export const IPC_CHANNELS = {
   getRemoteAccessStatus: "buildwarden:get-remote-access-status",
   listHostDirectories: "buildwarden:list-host-directories",
   createRemoteAccessPairing: "buildwarden:create-remote-access-pairing",
+  createRemoteAccessAgentToken: "buildwarden:create-remote-access-agent-token",
   listRemoteAccessSessions: "buildwarden:list-remote-access-sessions",
   revokeRemoteAccessSession: "buildwarden:revoke-remote-access-session",
   getNetworkProxySettings: "buildwarden:get-network-proxy-settings",

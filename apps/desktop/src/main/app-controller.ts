@@ -100,6 +100,7 @@ export class AppController
       | "setDesignBackgroundImage"
       | "listHostDirectories"
       | "createRemoteAccessPairing"
+      | "createRemoteAccessAgentToken"
       | "listRemoteAccessSessions"
       | "revokeRemoteAccessSession"
       | "onRunEvent"

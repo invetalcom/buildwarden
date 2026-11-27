@@ -49,6 +49,10 @@ const createDependencies = () => {
       getStatus: async () => ({ enabled: true, loopbackUrl: "http://127.0.0.1:47831", tailscale }),
       applyExposure: vi.fn(async () => undefined),
       createPairing: vi.fn(async () => ({ id: "g", code: "CODE", scopes: [], expiresAt: "", createdAt: "" })),
+      createAgentToken: vi.fn(async (input: { scopes?: string[] }) => ({
+        session: { id: "s", label: "Outside agent (MCP)", scopes: input.scopes ?? [], createdAt: "", expiresAt: "", lastUsedAt: "", revokedAt: null },
+        token: "tok", mcpUrl: "http://127.0.0.1:47831/mcp",
+      }) as never),
       revokeSession: async () => true,
     },
     backup: { exportTo: vi.fn(async () => undefined), restoreFrom: vi.fn(async () => ({ createdAt: "2026-01-01T00:00:00Z" })) },
@@ -89,6 +93,13 @@ describe("host control handlers", () => {
     await expect(handlers.remoteOrigins({ add: "https://*.example" })).rejects.toThrow("exact HTTPS origin");
     await expect(handlers.remoteOrigins({ remove: "https://other.example" })).rejects.toThrow("not in the list");
     expect(await handlers.remoteOrigins({ remove: "https://app.example" })).toEqual([]);
+  });
+
+  it("issues agent tokens that can start runs but never answer approvals", async () => {
+    const { deps, handlers } = createDependencies();
+    await handlers.agentToken({});
+    await handlers.agentToken({ readOnly: true });
+    expect(deps.remote.createAgentToken.mock.calls.map(([input]: [{ scopes?: string[] }]) => input.scopes)).toEqual([["state:read", "run:operate"], ["state:read"]]);
   });
 
   it("rejects unknown scopes", async () => {

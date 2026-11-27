@@ -1,5 +1,6 @@
 import { isAttachmentBlobId, isAutomationScheduleKind, isSkillImportInput, isSkillSelection } from "@buildwarden/shared";
 import { configureMcpStdioRelay } from "@buildwarden/agent-runtime";
+import { OutsideAgentMcp } from "./outside-agent-mcp";
 import { startAttachmentStorageMaintenance } from "./attachment-storage-maintenance";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -62,6 +63,8 @@ import {
   type RunChatInput,
   type RunInput,
   type AcpAgentSessionImportInput,
+  type RemoteAccessAgentToken,
+  REMOTE_ACCESS_MCP_PATH,
   type UsageCostReportInput,
   type SubscriptionLimitsInput,
   type SubscriptionResetInput,
@@ -1669,6 +1672,7 @@ const bootstrap = async (): Promise<void> => {
             onBrowserInput: (runId, input) => hostBrowser.sendInput({ runId, input }),
             onBrowserSubscriptionChange: (previousRunIds, nextRunIds) => hostBrowser.setRemoteSubscriptions(previousRunIds, nextRunIds),
             resolveVisualReplyFrame: (ticket) => controller.resolveVisualReplyFrameTicket(ticket),
+            mcp: new OutsideAgentMcp(remoteOperations, { serverVersion: app.getVersion() }),
             trustedProxyHosts: () => {
               const host = tailscaleServe.getManagedHost();
               return host ? [host] : [];
@@ -1773,6 +1777,22 @@ const bootstrap = async (): Promise<void> => {
       : grant;
   };
   ipcMain.handle(IPC_CHANNELS.createRemoteAccessPairing, (_, input?: RemoteAccessPairingInput) => createRemoteAccessPairing(input));
+  // A session for an outside MCP client, issued without a pairing step: only the host's own user asks for one.
+  const createRemoteAccessAgentToken = async (input?: Pick<RemoteAccessPairingInput, "label" | "scopes">): Promise<RemoteAccessAgentToken> => {
+    if (!isRemoteAccessEnabled()) throw new Error("Enable remote access before creating an agent token.");
+    await syncRemoteAccessServer();
+    const info = remoteAccessServer?.getInfo();
+    if (!info) throw new Error("Remote access could not be started.");
+    const auth = await ensureRemoteAuthService();
+    const label = input?.label?.trim() || "Outside agent";
+    const grant = auth.createPairingGrant({ label, ...(input?.scopes ? { scopes: input.scopes } : {}) });
+    const issued = auth.exchangePairingCode(grant.code, label, null);
+    if (!issued) throw new Error("The agent token could not be issued.");
+    const tailscaleStatus = await tailscaleServe.getStatus(info.port);
+    const endpoint = tailscaleStatus.verified && tailscaleStatus.endpoint ? tailscaleStatus.endpoint : info.baseUrl;
+    return { session: issued.session, token: issued.token, mcpUrl: endpoint.replace(/\/$/, "") + REMOTE_ACCESS_MCP_PATH };
+  };
+  ipcMain.handle(IPC_CHANNELS.createRemoteAccessAgentToken, (_, input?: Pick<RemoteAccessPairingInput, "label" | "scopes">) => createRemoteAccessAgentToken(input));
   ipcMain.handle(IPC_CHANNELS.listRemoteAccessSessions, () => db.listRemoteAccessSessions());
   ipcMain.handle(IPC_CHANNELS.revokeRemoteAccessSession, async (_, sessionId: string) => {
     (await ensureRemoteAuthService()).revokeSession(sessionId);
@@ -2270,6 +2290,7 @@ const bootstrap = async (): Promise<void> => {
             getStatus: getRemoteAccessStatus,
             applyExposure: syncRemoteAccessServer,
             createPairing: createRemoteAccessPairing,
+            createAgentToken: createRemoteAccessAgentToken,
             revokeSession: async (sessionId) => (await ensureRemoteAuthService()).revokeSession(sessionId),
           },
           backup: {

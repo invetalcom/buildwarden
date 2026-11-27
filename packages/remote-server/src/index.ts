@@ -22,6 +22,7 @@ import {
   REMOTE_ACCESS_PAIRING_PATH,
   REMOTE_ACCESS_PROTOCOL_VERSION,
   REMOTE_ACCESS_RPC_PATH,
+  REMOTE_ACCESS_MCP_PATH,
   REMOTE_ACCESS_SERVER_CAPABILITIES,
   REMOTE_ACCESS_SESSION_COOKIE,
   REMOTE_ACCESS_SESSION_PATH,
@@ -975,6 +976,14 @@ export interface RemoteAccessServerOptions {
   onBrowserSubscriptionChange?: (previousRunIds: readonly string[], nextRunIds: readonly string[]) => void;
   /** The frame document of a visual reply for a signed ticket, or null when the ticket is not valid. */
   resolveVisualReplyFrame?: (ticket: string) => string | null;
+  /**
+   * Serves MCP (Streamable HTTP, JSON responses) at `/mcp` for agents outside the app. Requests
+   * authenticate with a remote access session like RPC; the handler answers one JSON-RPC message,
+   * or null for a notification.
+   */
+  mcp?: {
+    handle(message: unknown, session: { id: string; scopes: readonly RemoteAccessScope[] }): Promise<Record<string, unknown> | null>;
+  };
 }
 
 const isRunEventPayload = (value: unknown): boolean =>
@@ -1462,6 +1471,12 @@ export class RemoteAccessServer {
       return;
     }
 
+    // MCP offers no server-sent stream, which Streamable HTTP clients learn from a 405 to GET.
+    if (url.pathname === REMOTE_ACCESS_MCP_PATH && this.options.mcp && request.method !== "POST" && request.method !== "DELETE") {
+      response.writeHead(405, { Allow: "POST, DELETE", "Cache-Control": "no-store" });
+      response.end();
+      return;
+    }
     if ((request.method === "GET" || request.method === "HEAD") && !url.pathname.startsWith("/api/")) {
       if (await this.serveStaticAsset(
         url.pathname,
@@ -1621,7 +1636,53 @@ export class RemoteAccessServer {
       await this.handleRpcRequest(request, response, session);
       return;
     }
+    if (url.pathname === REMOTE_ACCESS_MCP_PATH && this.options.mcp) {
+      await this.handleMcpRequest(request, response, session, this.options.mcp);
+      return;
+    }
     writeJson(response, 404, { error: "Not found." });
+  }
+
+  /** Streamable HTTP without a server stream: every request gets its answer as one JSON body. */
+  private async handleMcpRequest(
+    request: IncomingMessage,
+    response: ServerResponse,
+    session: RemoteAccessSession,
+    mcp: NonNullable<RemoteAccessServerOptions["mcp"]>,
+  ): Promise<void> {
+    if (request.method === "DELETE") {
+      writeJson(response, 200, { ok: true });
+      return;
+    }
+    if (request.method !== "POST") {
+      response.writeHead(405, { Allow: "POST, DELETE", "Cache-Control": "no-store" });
+      response.end();
+      return;
+    }
+    if (request.headers["content-type"]?.split(";", 1)[0]?.trim().toLowerCase() !== "application/json") {
+      writeJson(response, 415, { error: "Content-Type must be application/json." });
+      return;
+    }
+    let payload: unknown;
+    try {
+      payload = await readJsonBody(request, MAX_RPC_REQUEST_BODY_BYTES);
+    } catch (error) {
+      if (error instanceof RequestBodyError) {
+        writeJson(response, error.statusCode, { error: error.message });
+        return;
+      }
+      throw error;
+    }
+    const context = { id: session.id, scopes: session.scopes };
+    const messages = Array.isArray(payload) ? payload : [payload];
+    const answers = (await Promise.all(messages.map((message) => mcp.handle(message, context))))
+      .filter((answer): answer is Record<string, unknown> => answer !== null);
+    if (answers.length === 0) {
+      response.writeHead(202, { "Cache-Control": "no-store" });
+      response.end();
+      return;
+    }
+    writeJson(response, 200, Array.isArray(payload) ? answers : answers[0]);
   }
 
   private async handleRpcRequest(
