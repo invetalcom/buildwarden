@@ -201,7 +201,8 @@ const publishProjectForgeRequestOpen = (payload: { projectId: string; prUrl: str
 };
 
 type ProjectForgeMonitorState = {
-  intervalMinutes: number;
+  /** What the monitor was last resolved to. Every check reads it, so the timer never works from an older copy. */
+  config: ProjectForgePrMonitorConfig;
   timer: ReturnType<typeof setInterval>;
   seenRequestKeys: Set<string>;
   baselineComplete: boolean;
@@ -214,19 +215,25 @@ const projectForgeRequestKey = (item: { provider: string; number: number }): str
 
 const runProjectForgeMonitorCheck = async (
   controller: AppController,
-  config: ProjectForgePrMonitorConfig,
+  projectId: string,
 ): Promise<void> => {
-  const state = projectForgeMonitorStates.get(config.projectId);
+  const state = projectForgeMonitorStates.get(projectId);
   if (!state || state.inFlight) {
     return;
   }
+  const config = state.config;
+  /** False once the monitor was restarted for another repository or interval. A retired check announces nothing more. */
+  const isCurrent = (): boolean => projectForgeMonitorStates.get(projectId) === state;
+  /** Asked again after every wait: the monitor is still this one and background checks are still on. */
+  const stillWanted = (): boolean => isCurrent() &&
+    controller.shouldRunProjectForgeBackgroundCheck(config.projectId, !state.baselineComplete);
 
-  if (!controller.shouldRunProjectForgeBackgroundCheck(config.projectId, !state.baselineComplete)) return;
+  if (!stillWanted()) return;
 
   state.inFlight = true;
   try {
     const result = await controller.listProjectForgeRequests(config.projectId, { state: "open" });
-    if (!controller.shouldRunProjectForgeBackgroundCheck(config.projectId, !state.baselineComplete)) return;
+    if (!stillWanted()) return;
     try {
       const changedTasks = await controller.syncProjectTaskPullRequestStatuses(config.projectId, true);
       for (const task of changedTasks) {
@@ -244,10 +251,13 @@ const runProjectForgeMonitorCheck = async (
         error,
       });
     }
-    if (!controller.shouldRunProjectForgeBackgroundCheck(config.projectId, !state.baselineComplete)) return;
+    if (!stillWanted()) return;
     try {
       // Issues share the PR/MR check interval; their first check only records a baseline.
-      for (const payload of await controller.collectProjectForgeIssueNotifications(config)) {
+      const issueNotifications = await controller.collectProjectForgeIssueNotifications(config);
+      // Collecting already recorded these as seen, so only a retired monitor may drop them.
+      if (!isCurrent()) return;
+      for (const payload of issueNotifications) {
         hostEvents.publish("forgeRequestNotification", payload);
         desktopPlatform.showProjectForgeRequestNotification({
           payload,
@@ -262,7 +272,7 @@ const runProjectForgeMonitorCheck = async (
         error,
       });
     }
-    if (!controller.shouldRunProjectForgeBackgroundCheck(config.projectId, !state.baselineComplete)) return;
+    if (!stillWanted()) return;
     const openRequests = result.items.filter((item) => item.state === "open" || item.state === "opened");
     const currentKeys = new Set(openRequests.map(projectForgeRequestKey));
 
@@ -299,12 +309,17 @@ const runProjectForgeMonitorCheck = async (
       error,
     });
   } finally {
-    const latest = projectForgeMonitorStates.get(config.projectId);
-    if (latest) {
-      latest.inFlight = false;
-    }
+    // Only this check's own state: a monitor restarted meanwhile tracks its own check.
+    state.inFlight = false;
   }
 };
+
+/**
+ * A different interval or repository starts the monitor over. Requests of another repository must
+ * become the new baseline instead of being announced as new.
+ */
+const isSameProjectForgeMonitor = (left: ProjectForgePrMonitorConfig, right: ProjectForgePrMonitorConfig): boolean =>
+  left.intervalMinutes === right.intervalMinutes && left.provider === right.provider && left.repoLabel === right.repoLabel;
 
 const refreshProjectForgePrMonitors = async (controller: AppController): Promise<void> => {
   const configs = await controller.listProjectForgePrMonitorConfigs();
@@ -319,7 +334,8 @@ const refreshProjectForgePrMonitors = async (controller: AppController): Promise
 
   for (const config of configs) {
     const current = projectForgeMonitorStates.get(config.projectId);
-    if (current && current.intervalMinutes === config.intervalMinutes) {
+    if (current && isSameProjectForgeMonitor(current.config, config)) {
+      current.config = config;
       continue;
     }
     if (current) {
@@ -327,18 +343,18 @@ const refreshProjectForgePrMonitors = async (controller: AppController): Promise
     }
 
     const timer = setInterval(() => {
-      void runProjectForgeMonitorCheck(controller, config);
+      void runProjectForgeMonitorCheck(controller, config.projectId);
     }, config.intervalMinutes * 60_000);
 
     projectForgeMonitorStates.set(config.projectId, {
-      intervalMinutes: config.intervalMinutes,
+      config,
       timer,
       seenRequestKeys: new Set(),
       baselineComplete: false,
       inFlight: false,
     });
 
-    void runProjectForgeMonitorCheck(controller, config);
+    void runProjectForgeMonitorCheck(controller, config.projectId);
   }
 };
 
@@ -702,9 +718,14 @@ const bootstrap = async (): Promise<void> => {
     (chatId, request) => controller.getEarlierChatHistory(chatId, request),
     validateHistoryPageArgs,
   );
+  remoteOperations.register("listChats", () => controller.listChats(), validateNoRemoteArgs);
   remoteOperations.register("listChatsWithSteps", () => controller.listChatsWithSteps(), validateNoRemoteArgs);
   remoteOperations.register("getBookmarksWithSteps", () => controller.getBookmarksWithSteps(), validateNoRemoteArgs);
   remoteOperations.register("getChatBookmarksWithSteps", () => controller.getChatBookmarksWithSteps(), validateNoRemoteArgs);
+  remoteOperations.register("listBookmarkEntries", () => controller.listBookmarkEntries(), validateNoRemoteArgs);
+  remoteOperations.register("getBookmarkWithSteps", (bookmarkId) => controller.getBookmarkWithSteps(bookmarkId), validateSingleRemoteStringArg);
+  remoteOperations.register("searchBookmarks", (query) => controller.searchBookmarks(query), validateSingleRemoteStringArg);
+  remoteOperations.register("searchChats", (query) => controller.searchChats(query), validateSingleRemoteStringArg);
 
   const isRemoteRecord = (value: unknown): value is Record<string, unknown> =>
     value != null && typeof value === "object" && !Array.isArray(value);
@@ -2114,6 +2135,9 @@ const bootstrap = async (): Promise<void> => {
   );
   ipcMain.handle(IPC_CHANNELS.isChatBookmarked, (_, chatId: string) => controller.isChatBookmarked(chatId));
   ipcMain.handle(IPC_CHANNELS.getChatBookmarksWithSteps, () => controller.getChatBookmarksWithSteps());
+  ipcMain.handle(IPC_CHANNELS.listBookmarkEntries, () => controller.listBookmarkEntries());
+  ipcMain.handle(IPC_CHANNELS.getBookmarkWithSteps, (_, bookmarkId: string) => controller.getBookmarkWithSteps(bookmarkId));
+  ipcMain.handle(IPC_CHANNELS.searchBookmarks, (_, query: string) => controller.searchBookmarks(query));
   ipcMain.handle(IPC_CHANNELS.exportDataBackup, async (_, input: DataBackupExportInput) => {
     const password = typeof input?.password === "string" ? input.password : "";
     const date = new Date().toISOString().slice(0, 10);
@@ -2179,6 +2203,7 @@ const bootstrap = async (): Promise<void> => {
   ipcMain.handle(IPC_CHANNELS.updateChatFollowUpQueue, (_, chatId: string, action) => controller.updateChatFollowUpQueue(chatId, action));
   ipcMain.handle(IPC_CHANNELS.listChats, () => controller.listChats());
   ipcMain.handle(IPC_CHANNELS.listChatsWithSteps, () => controller.listChatsWithSteps());
+  ipcMain.handle(IPC_CHANNELS.searchChats, (_, query: string) => controller.searchChats(query));
   ipcMain.handle(IPC_CHANNELS.deleteChat, (_, chatId: string) => controller.deleteChat(chatId));
   ipcMain.handle(IPC_CHANNELS.cancelChat, (_, chatId: string) => controller.cancelChat(chatId));
   ipcMain.handle(IPC_CHANNELS.showAppMenu, (_, section: AppMenuSection, x: number, y: number) => {

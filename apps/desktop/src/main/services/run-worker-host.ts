@@ -76,11 +76,14 @@ export class RunWorkerHost extends AppService<RunWorkerTurnDependencies | "provi
     this.services.activeWorkers.requireAgentWorkersAvailable();
     const workerPath = join(dirname(fileURLToPath(import.meta.url)), "worker.js");
     const nativeSession = this.services.turnState.resolveRunNativeSession(run, provider);
+    // One read of the history serves the fallback context, the usage tracker and the prior messages.
+    // Nothing below waits, so the worker starts from exactly these steps.
+    const steps = this.db.getRunSteps(run.id);
     // Every resume needs it, including recovery and orchestration wakes, not only follow-ups.
     const resumeFallbackContext = nativeSession.session
-      ? options?.resumeFallbackContext ?? this.services.turnState.buildResumeFallbackContext(this.db.getRunSteps(run.id), provider)
+      ? options?.resumeFallbackContext ?? this.services.turnState.buildResumeFallbackContext(steps, provider)
       : undefined;
-    const usageTracker = this.services.runWorkerOutput.initialUsageReportTracker(provider, this.db.getRunSteps(run.id), nativeSession.session !== null, model);
+    const usageTracker = this.services.runWorkerOutput.initialUsageReportTracker(provider, steps, nativeSession.session !== null, model);
     if (this.services.workspaceGuard.manualVerifications.has(run.id)) throw new Error("Wait for verification to finish or cancel it first.");
     const shellAllowlistExtra = parseShellAllowlistExtraSetting(settings[APP_SETTING_KEYS.shellAllowlistExtra]);
     const toolApprovalAllowlist = parseToolApprovalAllowlistSetting(settings[APP_SETTING_KEYS.toolApprovalAllowlist])[run.projectId] ?? [];
@@ -123,7 +126,7 @@ export class RunWorkerHost extends AppService<RunWorkerTurnDependencies | "provi
           apiBaseUrl: model.baseUrlOverride ?? provider.apiBaseUrl,
           previousResponseId: nativeSession.previousResponseId,
           providerSessionRuntime: nativeSession.session,
-          priorMessages: this.services.turnState.buildPriorRunMessagesFromSteps(run.id),
+          priorMessages: this.services.turnState.buildPriorRunMessages(steps),
           skills,
           config: JSON.parse(provider.configJson || "{}") as Record<string, unknown>,
           modelConfig: JSON.parse(model.configJson || "{}") as Record<string, unknown>,

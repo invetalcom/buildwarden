@@ -11,6 +11,7 @@ import {
   type RunProjectLabInput,
   type RunRecord,
 } from "@buildwarden/shared";
+import type { BuildWardenDatabase } from "@buildwarden/db";
 import { getHarnessTypeForProvider } from "../harness-adapters";
 import { AppService } from "./app-service";
 import { SELECTED_PROJECT_KEY, SELECTED_RUN_KEY } from "./app-service-constants";
@@ -27,10 +28,46 @@ const describeLabStart = (modeLabel: string, baseBranch: string | null, topic: s
 
 /** Runs Project Lab proposals and implementations. */
 export class ProjectLabService
-  extends AppService<"modelText" | "projectLabPrompts" | "projects" | "runDeletion" | "runDetails" | "runLifecycle">
+  extends AppService<"modelText" | "projectLabPrompts" | "projects" | "runDeletion" | "runDetails" | "runEvents" | "runLifecycle">
   implements RunEndedListener
 {
   private readonly cancelledProjectLabThreadIds = new Set<string>();
+  private labChangeAnnouncementQueued = false;
+
+  /**
+   * Clients show threads from the snapshot, so every change tells them to reload it. Changes made
+   * in one go, such as a new message with a new status, are announced once.
+   */
+  private announceLabChange(): void {
+    if (this.labChangeAnnouncementQueued) return;
+    this.labChangeAnnouncementQueued = true;
+    queueMicrotask(() => {
+      this.labChangeAnnouncementQueued = false;
+      try {
+        this.services.runEvents.publishSnapshotChanged();
+      } catch (error) {
+        // Nothing awaits this, so a failing subscriber would end the app.
+        this.logControllerError("Could not announce a Project Lab change.", error);
+      }
+    });
+  }
+
+  private createLabThread(input: Parameters<BuildWardenDatabase["createProjectLabThread"]>[0]): ProjectLabThreadRecord {
+    const thread = this.db.createProjectLabThread(input);
+    this.announceLabChange();
+    return thread;
+  }
+
+  private updateLabThread(threadId: string, input: Parameters<BuildWardenDatabase["updateProjectLabThread"]>[1]): ProjectLabThreadRecord {
+    const thread = this.db.updateProjectLabThread(threadId, input);
+    this.announceLabChange();
+    return thread;
+  }
+
+  private appendLabEvent(input: Parameters<BuildWardenDatabase["appendProjectLabEvent"]>[0]): void {
+    this.db.appendProjectLabEvent(input);
+    this.announceLabChange();
+  }
 
   private getProjectLabSettings(projectId: string): ProjectLabSettings {
     const settingsByProjectId = parseProjectLabSettingsSetting(this.db.getSettings()[APP_SETTING_KEYS.projectLabSettings]);
@@ -93,9 +130,9 @@ export class ProjectLabService
       this.logControllerError("Could not review a Project Lab implementation.", error, { runId: run.id, threadId: run.labThreadId });
       if (this.isProjectLabThreadCancelled(run.labThreadId)) return;
       const content = `The implementation completed, but its review failed: ${error instanceof Error ? error.message : String(error)}`;
-      this.db.appendProjectLabEvent({ threadId: run.labThreadId, role: "system", label: "System", content });
+      this.appendLabEvent({ threadId: run.labThreadId, role: "system", label: "System", content });
       const summary = run.summary?.trim();
-      this.db.updateProjectLabThread(run.labThreadId, { status: "completed", ...(summary ? { summary } : {}), outcome: content });
+      this.updateLabThread(run.labThreadId, { status: "completed", ...(summary ? { summary } : {}), outcome: content });
     }
   }
 
@@ -105,13 +142,13 @@ export class ProjectLabService
     const reviewModelId = thread.reviewModelId?.trim();
 
     if (!reviewModelId) {
-      this.db.appendProjectLabEvent({
+      this.appendLabEvent({
         threadId: thread.id,
         role: "system",
         label: "System",
         content: "Implementation completed, but no review model was stored on this Project Lab thread.",
       });
-      this.db.updateProjectLabThread(thread.id, {
+      this.updateLabThread(thread.id, {
         status: "completed",
         summary: run.summary?.trim() || thread.summary,
         outcome: run.summary?.trim() || thread.outcome,
@@ -119,7 +156,7 @@ export class ProjectLabService
       return;
     }
 
-    this.db.updateProjectLabThread(thread.id, { status: "reviewing" });
+    this.updateLabThread(thread.id, { status: "reviewing" });
     const diff = (await this.services.runDetails.getRunWorktreeDiff(run.id)).diff.trim();
     const context = await this.services.modelText.resolveModelInvocationContext(reviewModelId);
     const content = await this.services.modelText.askModelForText(run.worktreePath, context, {
@@ -143,13 +180,13 @@ export class ProjectLabService
     });
 
     const review = content.trim() || "Review completed without comments.";
-    this.db.appendProjectLabEvent({
+    this.appendLabEvent({
       threadId: thread.id,
       role: "review",
       label: "Review agent",
       content: review,
     });
-    this.db.updateProjectLabThread(thread.id, {
+    this.updateLabThread(thread.id, {
       status: "completed",
       summary: run.summary?.trim() || thread.summary,
       outcome: review,
@@ -164,13 +201,13 @@ export class ProjectLabService
     if (thread.status === "cancelled") {
       return;
     }
-    this.db.appendProjectLabEvent({
+    this.appendLabEvent({
       threadId: thread.id,
       role: "system",
       label: "System",
       content: `Implementation ended without success: ${message}`,
     });
-    this.db.updateProjectLabThread(thread.id, {
+    this.updateLabThread(thread.id, {
       status: "failed",
       outcome: message,
     });
@@ -185,13 +222,13 @@ export class ProjectLabService
       if (thread.status === "cancelled") {
         return;
       }
-      this.db.appendProjectLabEvent({
+      this.appendLabEvent({
         threadId: thread.id,
         role: "system",
         label: "System",
         content: message,
       });
-      this.db.updateProjectLabThread(thread.id, {
+      this.updateLabThread(thread.id, {
         status: "cancelled",
         outcome: message,
       });
@@ -264,13 +301,13 @@ export class ProjectLabService
     }
 
     const rfcContent = rfc.trim() || "No RFC content returned.";
-    this.db.appendProjectLabEvent({
+    this.appendLabEvent({
       threadId,
       role: "rfc",
       label: "RFC agent",
       content: rfcContent,
     });
-    this.db.updateProjectLabThread(threadId, {
+    this.updateLabThread(threadId, {
       title: this.projectLabTitleFromMarkdown(rfcContent, "Project Lab RFC"),
       summary: this.projectLabSummaryFromMarkdown(rfcContent, "Project Lab drafted an RFC."),
       outcome: rfcContent,
@@ -297,13 +334,13 @@ export class ProjectLabService
       return;
     }
 
-    this.db.appendProjectLabEvent({
+    this.appendLabEvent({
       threadId,
       role: "review",
       label: "Review agent",
       content: review.trim() || "RFC review completed without comments.",
     });
-    this.db.updateProjectLabThread(threadId, {
+    this.updateLabThread(threadId, {
       status: "completed",
     });
   }
@@ -353,7 +390,7 @@ export class ProjectLabService
       throw new Error(`Project Lab already has ${String(settings.maxConcurrentThreads)} active thread(s) on this project.`);
     }
 
-    const thread = this.db.createProjectLabThread({
+    const thread = this.createLabThread({
       projectId: project.id,
       kind: mode === "rfc-only" ? "rfc" : "implementation",
       mode,
@@ -367,7 +404,7 @@ export class ProjectLabService
       baseBranch,
     });
 
-    this.db.appendProjectLabEvent({
+    this.appendLabEvent({
       threadId: thread.id,
       role: "system",
       label: "Project Lab",
@@ -375,18 +412,18 @@ export class ProjectLabService
     });
 
     if (mode === "rfc-only") {
-      this.db.updateProjectLabThread(thread.id, { status: "running" });
+      this.updateLabThread(thread.id, { status: "running" });
       void this.executeProjectLabRfcThread(thread.id, input, project, mode, implementationModelId, reviewModelId, baseBranch).catch((error) => {
         const message = error instanceof Error ? error.message : String(error);
         if (!this.isProjectLabThreadCancelled(thread.id)) {
           try {
-            this.db.appendProjectLabEvent({
+            this.appendLabEvent({
               threadId: thread.id,
               role: "system",
               label: "Project Lab",
               content: `Project Lab RFC failed: ${message}`,
             });
-            this.db.updateProjectLabThread(thread.id, {
+            this.updateLabThread(thread.id, {
               status: "failed",
               outcome: message,
             });
@@ -414,7 +451,7 @@ export class ProjectLabService
       await this.settleFailedProjectLabLaunch(thread, error);
       throw error;
     }
-    this.db.appendProjectLabEvent({
+    this.appendLabEvent({
       threadId: thread.id,
       role: "implementation",
       label: "Implementation agent",
@@ -425,7 +462,7 @@ export class ProjectLabService
     });
 
     return [
-      this.db.updateProjectLabThread(thread.id, {
+      this.updateLabThread(thread.id, {
         status: "running",
         implementationPrompt,
         implementationRunId: implementationRun.id,
@@ -442,8 +479,8 @@ export class ProjectLabService
       if (run) await this.services.runDeletion.deleteRun(run.id);
       return;
     }
-    this.db.appendProjectLabEvent({ threadId: thread.id, role: "system", label: "Project Lab", content: `The implementation could not start: ${message}` });
-    this.db.updateProjectLabThread(thread.id, {
+    this.appendLabEvent({ threadId: thread.id, role: "system", label: "Project Lab", content: `The implementation could not start: ${message}` });
+    this.updateLabThread(thread.id, {
       status: "failed",
       outcome: message,
       ...(run ? { implementationRunId: run.id } : {}),
@@ -463,6 +500,7 @@ export class ProjectLabService
         })()
       : null;
     this.db.deleteProjectLabThread(threadId);
+    this.announceLabChange();
     if (implementationRun) {
       const ownedTask = this.db.getOrchestrationTaskByChildRunId(implementationRun.id);
       if (ownedTask) {

@@ -282,6 +282,8 @@ const RUN_PANEL_TOGGLE_DEFINITIONS: readonly RunPanelToggleDefinition[] = [
 const SNAPSHOT_REFRESH_DELAY_MS = 300;
 /** Token usage arrives with nearly every streamed step; aggregate totals can lag a few seconds. */
 const USAGE_SNAPSHOT_REFRESH_DELAY_MS = 5_000;
+/** For a remote host too old to announce Project Lab changes. */
+const LAB_THREAD_FALLBACK_POLL_MS = 10_000;
 
 const addProjectForgeRequestToast = (
   current: ProjectForgeRequestToast[],
@@ -1676,15 +1678,19 @@ export const App = () => {
     selectedProject?.labThreads.some(
       (detail) => detail.thread.status === "queued" || detail.thread.status === "running" || detail.thread.status === "reviewing",
     ) ?? false;
+  // The host announces every Project Lab change and clients reload the snapshot on it, so the
+  // desktop app needs no poll. A remote host may be an older version that stays silent; clients
+  // with live events keep a slow poll for it (the others already poll every few seconds).
+  const labThreadsNeedPolling = buildwarden.capabilities.platform !== "electron" && buildwarden.capabilities.liveEvents;
   useEffect(() => {
-    if (!selectedProjectHasActiveLabThread) {
+    if (!selectedProjectHasActiveLabThread || !labThreadsNeedPolling) {
       return;
     }
     const intervalId = window.setInterval(() => {
       void loadSnapshot();
-    }, 2000);
+    }, LAB_THREAD_FALLBACK_POLL_MS);
     return () => window.clearInterval(intervalId);
-  }, [loadSnapshot, selectedProjectHasActiveLabThread]);
+  }, [labThreadsNeedPolling, loadSnapshot, selectedProjectHasActiveLabThread]);
 
   const projectRunStats = useMemo(() => {
     const runs = [...(selectedProject?.runs ?? []), ...(selectedProject?.forLaterRuns ?? [])];

@@ -1457,7 +1457,7 @@ describe("AppController settings and lightweight workflows", () => {
       kind: "automation",
       workspaceType: "worktree",
       yoloMode: true,
-    }));
+    }), { background: true });
 
     expect(listener).toHaveBeenCalledWith({
       automationId: automation.id,
@@ -1498,7 +1498,7 @@ describe("AppController settings and lightweight workflows", () => {
       kind: "automation",
       workspaceType: "worktree",
       yoloMode: true,
-    }));
+    }), undefined);
   });
 
   it("isolates startup catch-up failures and always releases the scheduler", async () => {
@@ -3317,6 +3317,7 @@ describe("AppController settings and lightweight workflows", () => {
       expect.stringContaining(message.content),
       { mode: "ask", modelId: model.id, yoloMode: permissionMode === "inherit" },
       expect.objectContaining({ orchestrationTaskId: orchestrationTask.id, orchestrationMessageIds: [message.id] }),
+      { background: true },
     );
     expect(updateMessage).toHaveBeenCalledWith(message.id, "delivered");
     expect(updateTask).toHaveBeenLastCalledWith(orchestrationTask.id, expect.objectContaining({ status: "running" }));

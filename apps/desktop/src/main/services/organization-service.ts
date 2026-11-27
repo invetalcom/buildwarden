@@ -1,6 +1,7 @@
 import {
   APP_SETTING_KEYS,
   type AttentionItem,
+  type BookmarkListEntry,
   type BookmarkRecord,
   type ChatBookmarkRecord,
   parseAttentionInboxSettings,
@@ -62,6 +63,18 @@ export class OrganizationService extends AppService<"providerRuntime" | "runEven
 
   getChatBookmarksWithSteps(): Promise<ChatBookmarkRecord[]> {
     return Promise.resolve(this.db.getChatBookmarksWithSteps());
+  }
+
+  async listBookmarkEntries(): Promise<BookmarkListEntry[]> {
+    return this.db.listBookmarkEntries();
+  }
+
+  async getBookmarkWithSteps(bookmarkId: string): Promise<BookmarkRecord | ChatBookmarkRecord | null> {
+    return this.db.getBookmarkWithSteps(bookmarkId);
+  }
+
+  async searchBookmarks(query: string): Promise<string[]> {
+    return this.db.searchBookmarks(query);
   }
 
   isBookmarked(runId: string): Promise<boolean> {

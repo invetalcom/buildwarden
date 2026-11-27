@@ -4,6 +4,7 @@ export { useComposerDraft, type ComposerDraft } from "./lib/use-composer-draft";
 export { ComposerDraftStatus } from "./components/app/ComposerDraftStatus";
 export { InstanceContextProvider, InstanceBadge, InstanceTargetSelector, useInstanceContext, type InstanceContextValue, type InstanceSummary } from "./lib/instance-context";
 export { scopedId, parseScopedId, mapEntityIds } from "./lib/instance-identity";
+export { IncompleteHostSearchError } from "./lib/use-host-search";
 export { DeepLinkNavigationContext, type ResolvedDeepLink } from "./lib/deep-links";
 export { useResolveDeepLink } from "./lib/use-resolve-deep-link";
 export { copyDeepLink } from "./lib/clipboard";

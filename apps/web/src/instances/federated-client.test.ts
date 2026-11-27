@@ -10,6 +10,7 @@ import type { ConnectedInstance } from "./instance-manager";
 vi.mock("@buildwarden/renderer", async () => ({
   ...await import("../../../../packages/renderer/src/lib/instance-identity"),
   ...await import("../../../../packages/renderer/src/lib/remote-buildwarden-client"),
+  ...await import("../../../../packages/renderer/src/lib/use-host-search"),
 }));
 vi.mock("@buildwarden/renderer/logic", () => ({ EMPTY_SNAPSHOT: {} }));
 
@@ -35,6 +36,11 @@ const setup = () => {
     followUpRun: vi.fn(async () => ({ id: "run" })),
     deleteRun: vi.fn(async () => undefined), setAppSetting: vi.fn(async () => undefined),
     listChatsWithSteps: vi.fn(async () => [{ chat: { id: "chat" }, steps: [] }] ),
+    listChats: vi.fn(async () => [{ id: "chat" }]),
+    searchChats: vi.fn(async () => ["chat"]),
+    listBookmarkEntries: vi.fn(async () => [{ id: "saved", originalRunId: "run", bookmarkedAt: "2026-10-28T10:00:00Z" }]),
+    searchBookmarks: vi.fn(async () => ["saved"]),
+    getBookmarkWithSteps: vi.fn(async () => ({ id: "saved", originalRunId: "run", steps: [] })),
     searchRunUserInput: vi.fn(async () => ["run"]),
     acknowledgeAttentionItems: vi.fn(async () => undefined),
     runTerminalStart: vi.fn(async () => ({ ok: true })),
@@ -174,6 +180,39 @@ describe("integrated multi-instance workspace", () => {
     expect((await client.listChatsWithSteps()).map((item) => item.chat.id)).toEqual([scopedId("a", "chat"), scopedId("b", "chat")]);
     b.listChatsWithSteps.mockRejectedValueOnce(new Error("offline"));
     expect(await client.listChatsWithSteps()).toHaveLength(2);
+  });
+  it("lists and searches saved items and chats on every host and opens one on its own host", async () => {
+    const { client, a, b } = setup();
+    expect((await client.listChats()).map((chat) => chat.id)).toEqual([scopedId("a", "chat"), scopedId("b", "chat")]);
+    expect(await client.searchChats("hello")).toEqual([scopedId("a", "chat"), scopedId("b", "chat")]);
+    expect((await client.listBookmarkEntries()).map((entry) => entry.id)).toEqual([scopedId("a", "saved"), scopedId("b", "saved")]);
+    // The second host holds the newer item, so it comes first.
+    a.listBookmarkEntries.mockResolvedValueOnce([{ id: "saved", originalRunId: "run", bookmarkedAt: "2026-10-28T10:00:00Z" }]);
+    b.listBookmarkEntries.mockResolvedValueOnce([{ id: "saved", originalRunId: "run", bookmarkedAt: "2026-10-29T10:00:00Z" }]);
+    expect((await client.listBookmarkEntries()).map((entry) => entry.id)).toEqual([scopedId("b", "saved"), scopedId("a", "saved")]);
+    expect(await client.searchBookmarks("hello")).toEqual([scopedId("a", "saved"), scopedId("b", "saved")]);
+    expect(a.searchBookmarks).toHaveBeenCalledWith("hello");
+    expect(await client.getBookmarkWithSteps(scopedId("b", "saved"))).toMatchObject({ id: scopedId("b", "saved"), originalRunId: scopedId("b", "run") });
+    expect(b.getBookmarkWithSteps).toHaveBeenCalledWith("saved");
+    expect(a.getBookmarkWithSteps).not.toHaveBeenCalled();
+  });
+  it("reports a search that a host could not answer and keeps the matches of the others", async () => {
+    const { client, entries, b } = setup();
+    b.searchBookmarks.mockRejectedValueOnce(new Error("offline"));
+    await expect(client.searchBookmarks("hello")).rejects.toMatchObject({ name: "IncompleteHostSearchError", ids: [scopedId("a", "saved")] });
+    await expect(client.searchBookmarks("hello")).resolves.toEqual([scopedId("a", "saved"), scopedId("b", "saved")]);
+
+    // An offline host with nothing listed has nothing a search could miss.
+    entries[1].status = "offline";
+    await expect(client.searchChats("hello")).resolves.toEqual([scopedId("a", "chat")]);
+    // Once its chats are listed from the cache, a search cannot cover them.
+    entries[1].status = "online";
+    await client.listChats();
+    entries[1].status = "offline";
+    await expect(client.searchChats("other")).rejects.toMatchObject({ ids: [scopedId("a", "chat")] });
+    // Lists and the run search keep answering with what they have.
+    await expect(client.listChats()).resolves.toHaveLength(2);
+    await expect(client.searchRunUserInput("hello")).resolves.toEqual([scopedId("a", "run")]);
   });
   it("partitions mixed-host batches and validates all destinations before sending", async () => {
     const { client, entries, a, b } = setup();

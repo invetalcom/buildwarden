@@ -134,8 +134,16 @@ export class RunEventLog extends AppService<"titles"> {
   }
 
   publishRunOrganization(snapshot: RunOrganizationSnapshot): RunOrganizationSnapshot {
-    this.events.publish("runOrganization", { changedAt: new Date().toISOString() });
+    this.publishSnapshotChanged();
     return snapshot;
+  }
+
+  /**
+   * Tells every client to reload the snapshot, for a change that has no event of its own.
+   * Clients of every version reload on this event, so it needs no new event type on the remote wire.
+   */
+  publishSnapshotChanged(): void {
+    this.events.publish("runOrganization", { changedAt: new Date().toISOString() });
   }
 
   emitAppWarning(warning: AppWarning): void {
