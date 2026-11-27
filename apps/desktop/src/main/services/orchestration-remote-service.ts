@@ -36,6 +36,11 @@ export class OrchestrationRemoteService extends AppService<"linkedHosts" | "orch
   private polling: Promise<void> | null = null;
   /** Tasks this process is starting on their host right now. */
   private readonly starting = new Set<string>();
+  /**
+   * Host runs to stop whose pending stop could not be saved. Polling retries them for as long as
+   * this process runs; only a restart before the host confirms can lose one, which the log says.
+   */
+  private readonly unsavedStops = new Map<string, OrchestrationTaskRecord>();
 
   /** Whether the orchestration, or one above it in a nested tree, is being deleted. */
   private treeBeingDeleted(orchestrationId: string): boolean {
@@ -132,17 +137,23 @@ export class OrchestrationRemoteService extends AppService<"linkedHosts" | "orch
         // The cancellation found no host run to stop; stop the one the host created since. The
         // run id and the pending stop are saved first, so a restart while cancel_run is on its
         // way still knows the run; polling stops it until the host confirms.
+        const pendingStop = { ...task, remote: { ...hostRun, stopPending: true } };
+        let saved = false;
         try {
-          await this.services.orchestration.withOrchestrationMutation(task.orchestrationId, async () => {
-            if (!this.db.findOrchestrationTask(task.id)) return;
-            this.db.updateOrchestrationTask(task.id, { remote: { ...hostRun, stopPending: true } });
+          saved = await this.services.orchestration.withOrchestrationMutation(task.orchestrationId, async () => {
+            if (!this.db.findOrchestrationTask(task.id)) return false;
+            this.db.updateOrchestrationTask(task.id, { remote: pendingStop.remote });
             await this.db.flushDurable();
+            return true;
           });
         } catch (error) {
-          this.logControllerWarn("Could not save the pending stop of a remote run started after its task was cancelled.", { taskId: task.id, error });
+          this.logControllerWarn("Could not save the pending stop of a remote run started after its task was cancelled. BuildWarden keeps retrying the stop while it runs; a restart before the host confirms would lose the run.", { taskId: task.id, hostRunId: hostRun.runId, error });
         }
+        // Without a durable record the obligation stays in memory, so a failed save and an
+        // unreachable host together still leave the run an owner.
+        if (!saved) this.unsavedStops.set(task.id, pendingStop);
         this.ensurePolling();
-        await this.retryPendingStop({ ...task, remote: hostRun });
+        await this.retryPendingStop(pendingStop);
         return;
       }
       this.ensurePolling();
@@ -216,11 +227,12 @@ export class OrchestrationRemoteService extends AppService<"linkedHosts" | "orch
   private async pollOnce(): Promise<void> {
     const tasks = this.db.listActiveRemoteOrchestrationTasks();
     const awaitingStop = this.db.listRemoteOrchestrationTasksAwaitingStop();
-    if (tasks.length === 0 && awaitingStop.length === 0) {
+    if (tasks.length === 0 && awaitingStop.length === 0 && this.unsavedStops.size === 0) {
       this.stopPolling();
       return;
     }
     for (const task of awaitingStop) await this.retryPendingStop(task);
+    for (const task of [...this.unsavedStops.values()]) await this.retryPendingStop(task);
     for (const task of tasks) {
       const remote = task.remote!;
       if (await this.retryPendingCancellation(task)) continue;
@@ -290,12 +302,18 @@ export class OrchestrationRemoteService extends AppService<"linkedHosts" | "orch
       this.logControllerWarn("A linked host has not confirmed that it stopped an ended task's run yet.", { taskId: task.id, error });
       return;
     }
-    await this.services.orchestration.withOrchestrationMutation(task.orchestrationId, async () => {
-      const current = this.db.findOrchestrationTask(task.id);
-      if (!current?.remote) return;
-      this.db.updateOrchestrationTask(task.id, { remote: { ...current.remote, stopPending: false } });
-      await this.db.flushDurable();
-    });
+    this.unsavedStops.delete(task.id);
+    try {
+      await this.services.orchestration.withOrchestrationMutation(task.orchestrationId, async () => {
+        const current = this.db.findOrchestrationTask(task.id);
+        if (!current?.remote) return;
+        this.db.updateOrchestrationTask(task.id, { remote: { ...current.remote, stopPending: false } });
+        await this.db.flushDurable();
+      });
+    } catch (error) {
+      // The run is stopped; a flag left set only asks the host once more, which it answers again.
+      this.logControllerWarn("Could not record that a linked host stopped an ended task's run.", { taskId: task.id, error });
+    }
   }
 
   /** Retries a cancellation that the host could not confirm before. */

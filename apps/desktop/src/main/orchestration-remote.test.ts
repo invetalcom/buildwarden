@@ -294,6 +294,35 @@ describe("delegating to a linked host", () => {
     expect(seenWhileStopping).toMatchObject({ runId: "host-run-1", stopPending: true });
   });
 
+  it("keeps retrying a late host run's stop when its pending stop cannot be saved and the host is away", async () => {
+    const { db, controller, host, delegate, taskByClientId, remote } = await setup();
+    const linkedHosts = serviceOf(controller, "linkedHosts");
+    const call = linkedHosts.callHostTool.bind(linkedHosts);
+    let hostAway = true;
+    vi.spyOn(linkedHosts, "callHostTool").mockImplementation(async (hostId, name, args, signal) => {
+      if (name === "cancel_run" && hostAway) throw new Error("connect ECONNREFUSED");
+      const answer = await call(hostId, name, args, signal);
+      if (name === "start_run") {
+        const task = taskByClientId("t17");
+        await serviceOf(controller, "orchestration").cancelOrchestrationTasks(db.getOrchestration(task.orchestrationId), [task.id]);
+      }
+      return answer as never;
+    });
+    const update = db.updateOrchestrationTask.bind(db);
+    vi.spyOn(db, "updateOrchestrationTask").mockImplementation((id, fields) => {
+      if (fields.remote?.stopPending) throw new Error("disk full");
+      return update(id, fields);
+    });
+    await delegate("t17");
+    await vi.waitFor(() => expect(host.created).toHaveLength(1));
+    await vi.waitFor(() => expect(taskByClientId("t17").status).toBe("cancelled"));
+    await remote.pollRemoteTasks();
+    expect(host.cancelled).toEqual([]);
+    hostAway = false;
+    await remote.pollRemoteTasks();
+    expect(host.cancelled).toEqual(["host-run-1"]);
+  });
+
   it("keeps stopping the host run when the start cannot be saved after the host created it", async () => {
     const { db, host, delegate, taskByClientId, remote } = await setup();
     const save = db.flushDurable.bind(db);
