@@ -53,9 +53,16 @@ export class OrchestrationRemoteService extends AppService<"linkedHosts" | "orch
     if (!remote || remote.runId || task.status !== "pending" || this.starting.has(task.id)) return;
     // Provisioning is saved before the host is asked, so a second pass never starts a second run.
     this.starting.add(task.id);
-    this.db.updateOrchestrationTask(task.id, { status: "provisioning" });
-    await this.db.flushDurable();
     try {
+      this.db.updateOrchestrationTask(task.id, { status: "provisioning" });
+      try {
+        await this.db.flushDurable();
+      } catch (error) {
+        // The host was not asked yet, so the task fails here rather than waiting as provisioning.
+        await this.settle(task.id, { status: "failed", summary: null, errorMessage: `BuildWarden could not save the task before starting it on ${remote.hostLabel}: ${error instanceof Error ? error.message : String(error)}` })
+          .catch((settleError: unknown) => this.logControllerWarn("Could not record a remote task's failed start.", { taskId: task.id, error: settleError }));
+        return;
+      }
       await this.startOnHost(task, remote);
     } finally {
       this.starting.delete(task.id);

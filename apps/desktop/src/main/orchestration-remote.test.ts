@@ -191,6 +191,28 @@ describe("delegating to a linked host", () => {
     expect(host.created).toHaveLength(1);
   });
 
+  it("fails the task and releases it when saving it before the start fails", async () => {
+    const { db, host, delegate, taskByClientId, remote } = await setup();
+    const save = db.flushDurable.bind(db);
+    let failed = false;
+    // Only the save that records provisioning, just before the host would be asked, fails.
+    const flush = vi.spyOn(db, "flushDurable").mockImplementation(async () => {
+      const provisioning = db.listActiveRemoteOrchestrationTasks().some((task) => task.status === "provisioning" && !task.remote?.runId);
+      if (provisioning && !failed) {
+        failed = true;
+        throw new Error("disk full");
+      }
+      await save();
+    });
+    await delegate("t7");
+    await vi.waitFor(() => expect(taskByClientId("t7").status).toBe("failed"));
+    flush.mockRestore();
+    expect(taskByClientId("t7").errorMessage).toContain("could not save the task");
+    expect(host.created).toHaveLength(0);
+    await remote.pollRemoteTasks();
+    expect(host.created).toHaveLength(0);
+  });
+
   it("keeps a running remote task across a restart instead of requeuing it here", async () => {
     const { controller, delegate, taskByClientId } = await setup();
     await delegate("t5");
