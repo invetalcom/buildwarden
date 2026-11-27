@@ -110,6 +110,21 @@ describe("run history organization", () => {
     expect(container.querySelector('[data-run-history-category="bugs"]')).not.toBeNull();
   });
 
+  it("leaves out category chips while no listed run has a category", async () => {
+    localStorage.setItem("buildwarden:run-history-view", "flat");
+    const runs = [parent, uncategorized];
+    const unused: RunOrganizationSnapshot = { sections: organization.sections, runs: [{ runId: parent.id, sectionId: null, tags: ["frontend"] }] };
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => root?.render(<RunHistory runs={runs} orchestratedRuns={[]} organization={unused}
+      treeRows={buildRunHierarchyRows(runs, [], { expandedRunIds: new Set() })}
+      matchingRunCount={2} searchQuery="" onSearchChange={vi.fn()} onSelectRun={vi.fn()} onSetRunForLater={vi.fn()}
+      onToggleRun={vi.fn()} readOnly />));
+    expect(container.querySelector('[title^="Category:"]')).toBeNull();
+    expect(container.querySelector('[title="Label: frontend"]')).not.toBeNull();
+  });
+
   it("selects category-visible children and preserves selection when switching to flat view", async () => {
     localStorage.setItem("buildwarden:run-history-view", "categories");
     const onDeleteRuns = vi.fn<(runs: RunListItem[]) => Promise<boolean>>().mockResolvedValue(true);

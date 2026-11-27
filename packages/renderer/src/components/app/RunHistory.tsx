@@ -70,6 +70,11 @@ export const RunHistory = ({ runs, orchestratedRuns, knownPrimaryRuns = runs, or
     expandedRunIds: expandedRunIds ?? new Set(treeRows.filter((row) => row.expanded).map((row) => row.run.id)),
     searchRows: hasRunSearch ? treeRows : undefined,
   }) : [], [view, runs, orchestratedRuns, knownPrimaryRuns, organization, expandedRunIds, hasRunSearch, treeRows]);
+  // A category chip on every row only says "Uncategorized" until some listed run has a category.
+  const showCategoryChips = useMemo(() => view === "flat" && treeRows.some((row) => {
+    const sectionId = metadataByRunId.get(row.run.id)?.sectionId;
+    return Boolean(sectionId) && sectionId !== UNCATEGORIZED_RUN_SECTION_ID && categoryById.has(sectionId ?? "");
+  }), [categoryById, metadataByRunId, treeRows, view]);
   const totalRunCount = runs.length + orchestratedRuns.length;
   const runById = useMemo(() => new Map([...runs, ...orchestratedRuns].map((run) => [run.id, run])), [orchestratedRuns, runs]);
   const visibleRunIds = useMemo(() => (view === "categories" ? categoryGroups.flatMap((group) => group.rows) : treeRows).map((row) => row.run.id).filter((id) => !instances || instances.clientForEntity(id).capabilities.runMutations), [view, categoryGroups, treeRows, instances]);
@@ -131,7 +136,7 @@ export const RunHistory = ({ runs, orchestratedRuns, knownPrimaryRuns = runs, or
       row={row}
       projectName={projectNameById?.get(row.run.projectId)}
       tags={metadata?.tags}
-      category={view === "flat" && organization !== EMPTY_RUN_ORGANIZATION ? category : undefined}
+      category={showCategoryChips ? category : undefined}
       providerType={providerTypeByAccountId?.get(row.run.providerAccountId) ?? providerTypeByModelId.get(row.run.modelId)}
       selected={selectedRunIds.has(row.run.id)}
       selectionMode={selectionMode}

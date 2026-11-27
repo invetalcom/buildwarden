@@ -81,6 +81,7 @@ import { RunEmbeddedBrowser } from "./RunEmbeddedBrowser";
 import { RunBrowserPreviewTile } from "./RunBrowserPreviewTile";
 import { BrowserElementAttachmentPreview } from "./BrowserElementAttachmentPreview";
 import { RunActivityTimeline } from "./RunActivityTimeline";
+import { withRunFailureStep } from "./run-failure-step";
 import { RunNotesPanel } from "./RunNoteCard";
 import { RunProcessesPanel } from "./RunProcessesPanel";
 import { type DiffReviewPanelState } from "./diff-review-panel";
@@ -434,6 +435,7 @@ export const RunDetailPage = ({
   const diffPending = runDetail.diffPending === true;
   const canReviewDiff = !isRunActive && diffLoaded && !diffPending && !runDetail.diffLoadError && Boolean(runDetail.diff.trim());
   const orderedSteps = useMemo(() => dedupeFinalSummarySteps(runDetail.steps), [runDetail.steps]);
+  const timelineSteps = useMemo(() => withRunFailureStep(runDetail.run, orderedSteps), [orderedSteps, runDetail.run]);
   const contextHistoryText = useMemo(() => buildVisibleConversationHistory(runDetail.steps), [runDetail.steps]);
 
   useEffect(() => {
@@ -1323,7 +1325,7 @@ export const RunDetailPage = ({
       onForkFromStep={onForkRun && buildwarden.capabilities.gitMutations && runDetail.run.kind === "standard" && !runDetail.orchestration
         ? (stepId) => onForkRun(runDetail.run, stepId) : undefined}
       key={`activity:${runDetail.run.id}`}
-      steps={orderedSteps}
+      steps={timelineSteps}
       run={{
         ...runDetail.run,
         orchestrationStatus: runDetail.orchestration?.orchestration.status ?? null,

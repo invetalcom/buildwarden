@@ -110,6 +110,8 @@ import {
   PanelRight,
 } from "lucide-react";
 import { Spinner } from "./components/ui/motion";
+import { RunLoadPlaceholder } from "./components/app/RunLoadPlaceholder";
+import { formatAppErrorMessage } from "./lib/app-error-message";
 /** Composer follow-up input before slash commands are resolved. */
 type RunFollowUpRequestOptions = RunFollowUpOptions & { mode: RunListItem["mode"]; modelId: string };
 
@@ -330,6 +332,8 @@ export const App = () => {
   const [openRunPanes, setOpenRunPanes] = useState<OpenRunPanes>({});
   const [focusedRunPane, setFocusedRunPane] = useState<RunPaneId>("left");
   const [runDetailsById, setRunDetailsById] = useState<Record<string, RunDetail>>({});
+  // Why the last load of a run's detail failed, so its page can say so instead of loading forever.
+  const [runDetailLoadErrors, setRunDetailLoadErrors] = useState<Record<string, string>>({});
   const [runPaneDropPreview, setRunPaneDropPreview] = useState<RunPaneId | null>(null);
   const [runLiveUsageById, setRunLiveUsageById] = useState<Record<string, Partial<RunTokenUsage>>>({});
   const [busy, setBusy] = useState(false);
@@ -955,21 +959,27 @@ export const App = () => {
       const summaryGeneration = (diffSummaryLoadGenerationRef.current[runId] ?? 0) + 1;
       diffSummaryLoadGenerationRef.current[runId] = summaryGeneration;
       mergeRunDetailForRun(runId, (previous) => ({ ...previous, diffSummaryPending: true }));
+      setRunDetailLoadErrors((current) => {
+        if (!(runId in current)) return current;
+        const next = { ...current };
+        delete next[runId];
+        return next;
+      });
 
       const forgeEventCount = forgeRequestEventsRef.current[runId]?.count ?? 0;
       let fast: RunDetail;
       try {
         fast = keepForgeRequestEventsSince(runId, forgeEventCount, await buildwarden.getRunDetail(runId));
       } catch (caught) {
-        if (
-          diffSummaryLoadGenerationRef.current[runId] === summaryGeneration
-          && runDetailLoadTokenRef.current[runId] === loadToken
-        ) {
-          mergeRunDetailForRun(runId, (previous) => ({
-            ...previous,
-            diffSummary: undefined,
-            diffSummaryPending: false,
-          }));
+        if (runDetailLoadTokenRef.current[runId] === loadToken) {
+          setRunDetailLoadErrors((current) => ({ ...current, [runId]: formatAppErrorMessage(caught, "Could not load this run.") }));
+          if (diffSummaryLoadGenerationRef.current[runId] === summaryGeneration) {
+            mergeRunDetailForRun(runId, (previous) => ({
+              ...previous,
+              diffSummary: undefined,
+              diffSummaryPending: false,
+            }));
+          }
         }
         throw caught;
       }
@@ -1252,6 +1262,7 @@ export const App = () => {
       recentRunDetailsRef.current.delete(runId);
     }
     setRunDetailsById(omitDeleted);
+    setRunDetailLoadErrors(omitDeleted);
     setRunLiveUsageById(omitDeleted);
     setRunBrowserSessions(omitDeleted);
     setRunTerminalOpenLinksInApp(omitDeleted);
@@ -4379,10 +4390,11 @@ export const App = () => {
             onUpdateRunFollowUpQueue={updateRunFollowUpQueue}
           /></InstanceScope></StatusBarSlotsContext.Provider>
         ) : (
-          <Card className="flex min-h-[400px] flex-1 flex-col items-center justify-center gap-4 p-8">
-            <Spinner className="h-10 w-10 text-[var(--ec-accent)]" />
-            <p className="text-sm text-[var(--ec-muted)]">Loading run...</p>
-          </Card>
+          <RunLoadPlaceholder
+            className="flex-1"
+            error={runDetailLoadErrors[entry.runId] ?? null}
+            onRetry={() => loadRunDetailForRun(entry.runId)}
+          />
         )}
         {paneDropPreviewActive ? <RunPaneDropPreviewOverlay paneId={entry.paneId} mode="replace" /> : null}
       </div>
@@ -5156,10 +5168,10 @@ export const App = () => {
             }
             if (selectedRunId) {
               return renderWorkspaceView(
-            <Card className="flex min-h-[400px] flex-col items-center justify-center gap-4 p-8">
-              <Spinner className="h-10 w-10 text-[var(--ec-accent)]" />
-              <p className="text-sm text-[var(--ec-muted)]">Loading run...</p>
-            </Card>,
+            <RunLoadPlaceholder
+              error={runDetailLoadErrors[selectedRunId] ?? null}
+              onRetry={() => loadRunDetailForRun(selectedRunId)}
+            />,
               );
             }
             if (selectedProject) {
@@ -5321,7 +5333,8 @@ export const App = () => {
         selectedProjectId={selectedProject?.project.id ?? null}
         currentProjectBranch={currentProjectBranch}
         currentProjectBranchStatus={currentProjectBranchStatus}
-        projectView={projectPageTab}
+        // An open run belongs to Agent Runs, whichever project page was open before it.
+        projectView={typeof selectedRunId === "string" ? "overview" : projectPageTab}
         highlightedRunId={
           !landingSelected && !allRunsSelected && !bookmarksSelected && !chatsSelected && !settingsOpen && typeof selectedRunId === "string" ? selectedRunId : null
         }
