@@ -342,6 +342,17 @@ export class OrchestrationRemoteService extends AppService<"linkedHosts" | "orch
     }
   }
 
+  /**
+   * Stops the host run of a task whose pending stop is held only in memory, as the task's row may
+   * not know that run. Throws while the host cannot confirm, so a deletion that needs it waits.
+   */
+  async stopUnsavedHostRun(taskId: string): Promise<void> {
+    const unsaved = this.unsavedStops.get(taskId);
+    if (!unsaved) return;
+    await this.cancelRemoteRun(unsaved.task);
+    this.unsavedStops.delete(taskId);
+  }
+
   /** Stops the host run of a task that already ended here, until the host confirms. */
   private async retryPendingStop(task: OrchestrationTaskRecord): Promise<void> {
     try {

@@ -360,6 +360,40 @@ describe("delegating to a linked host", () => {
     expect(taskByClientId("t19").remote).toMatchObject({ stopPending: false });
   });
 
+  it("does not delete the coordinator while a host run's unsaved stop is unconfirmed", async () => {
+    const { db, controller, host, delegate, taskByClientId, remote, coordinator } = await setup();
+    const linkedHosts = serviceOf(controller, "linkedHosts");
+    const call = linkedHosts.callHostTool.bind(linkedHosts);
+    let hostAway = true;
+    vi.spyOn(linkedHosts, "callHostTool").mockImplementation(async (hostId, name, args, signal) => {
+      if (name === "cancel_run" && hostAway) throw new Error("connect ECONNREFUSED");
+      const answer = await call(hostId, name, args, signal);
+      if (name === "start_run") {
+        const task = taskByClientId("t23");
+        await serviceOf(controller, "orchestration").cancelOrchestrationTasks(db.getOrchestration(task.orchestrationId), [task.id]);
+      }
+      return answer as never;
+    });
+    const update = db.updateOrchestrationTask.bind(db);
+    vi.spyOn(db, "updateOrchestrationTask").mockImplementation((id, fields) => {
+      if (fields.remote?.stopPending) throw new Error("disk full");
+      return update(id, fields);
+    });
+    const unsavedStops = (remote as unknown as { unsavedStops: Map<string, unknown> }).unsavedStops;
+    await delegate("t23");
+    await vi.waitFor(() => expect(unsavedStops.size).toBe(1));
+    await vi.waitFor(() => expect(remote.isStarting(taskByClientId("t23").id)).toBe(false));
+    // The task's row has no host run id; only the unsaved stop knows the run.
+    expect(taskByClientId("t23").remote?.runId).toBeNull();
+    await expect(controller.deleteRun(coordinator.id)).rejects.toThrow();
+    expect(db.getRun(coordinator.id)).toBeDefined();
+    hostAway = false;
+    await controller.deleteRun(coordinator.id);
+    expect(host.cancelled).toEqual(["host-run-1"]);
+    expect(unsavedStops.size).toBe(0);
+    expect(() => db.getRun(coordinator.id)).toThrow();
+  });
+
   it("records a failed start and its host run's stop once storage recovers, and wakes the coordinator", async () => {
     const { db, controller, host, delegate, taskByClientId, remote, wake } = await setup();
     const linkedHosts = serviceOf(controller, "linkedHosts");

@@ -56,6 +56,9 @@ export class OrchestrationRecoveryService extends AppService<
           if (task.remote && this.services.orchestrationRemote.isStarting(task.id)) {
             throw new Error(`A task is being started on ${task.remote.hostLabel}. Delete the run again in a moment.`);
           }
+          // A host run whose pending stop could not be saved is known only in memory; once the row
+          // is deleted, nothing could save that stop any more.
+          if (task.remote) await this.services.orchestrationRemote.stopUnsavedHostRun(task.id);
           if (task.remote?.runId && (!ORCHESTRATION_TERMINAL_TASK_STATUSES.has(task.status) || task.remote.stopPending)) {
             await this.services.orchestrationRemote.cancelRemoteRun(task);
           }
