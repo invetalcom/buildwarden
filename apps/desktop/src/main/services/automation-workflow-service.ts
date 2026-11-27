@@ -231,7 +231,12 @@ export class AutomationWorkflowService extends AppService<"activeWorkers" | "aut
       throw new Error("This question was already answered or is no longer open.");
     }
     if (question.answer) throw new Error("This question was already answered.");
-    const choice = typeof input.choice === "string" ? input.choice.trim() : "";
+    if (question.expiresAt && Date.now() >= Date.parse(question.expiresAt)) {
+      // The time limit decides, even when the workflow has not applied it yet.
+      void this.advance(workflow.id);
+      throw new Error("The time to answer this question has run out.");
+    }
+    const choice =typeof input.choice === "string" ? input.choice.trim() : "";
     if (!question.choices.includes(choice)) throw new Error("Choose one of the offered answers.");
     const reason = typeof input.reason === "string" ? input.reason.trim().slice(0, 2_000) : "";
     if (question.requireReason && !reason) throw new Error("This question needs a reason with the answer.");

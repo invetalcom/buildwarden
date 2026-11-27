@@ -123,6 +123,9 @@ describe("automation workflows", () => {
     if (!question) throw new Error("The question was not asked.");
     question.expiresAt = new Date(Date.now() - 1_000).toISOString();
     db.saveAutomationWorkflowRun(expired);
+    // An answer after the deadline loses to the time limit, even before the workflow applied it.
+    await expect(workflows.answerQuestion({ workflowRunId: started.id, stepId: "approve", choice: "Upgrade" }))
+      .rejects.toThrow("The time to answer this question has run out.");
     await workflows.advance(started.id);
     expect(db.getAutomationWorkflowRun(started.id)).toMatchObject({ status: "completed", steps: [{}, { value: "Skip", note: "No answer in time" }] });
 
