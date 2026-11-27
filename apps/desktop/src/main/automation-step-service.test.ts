@@ -118,6 +118,34 @@ describe("automation agent steps", () => {
     expect(findRecoverablePullRequest([request("main", null)], { ...wanted, sourceRepository: null })?.url).toBe("https://example.test/main");
   });
 
+  it("waits for checks to appear, and decides a pull request has none only after a while", async () => {
+    const { steps, services, stepContext } = await setup();
+    const checks = { completed: 0, total: 0, successful: 0, failed: 0, running: 0 };
+    const summary = { state: "open", statusLastSyncedAt: new Date().toISOString(), checks };
+    Object.assign(services, { runForge: { syncRunForgeRequest: vi.fn(async () => summary) } });
+    stepContext.workflow.steps = [
+      { ...createAutomationStepState("pr", "open-pr"), status: "done", value: "opened", runId: "run-1", prUrl: "https://example.test/pr/1" },
+      createAutomationStepState("checks", "wait-pr"),
+    ];
+    const state = stepContext.workflow.steps[1]!;
+    const waitContext: AutomationStepContext = {
+      ...stepContext, state, index: 1, step: { id: "checks", kind: "wait-pr", when: null, until: "checks", timeoutHours: 2 },
+    };
+    state.startedAt = new Date().toISOString();
+    await expect(steps.begin(waitContext)).resolves.toEqual({ kind: "waiting" });
+
+    state.polledAt = null;
+    state.startedAt = new Date(Date.now() - 11 * 60_000).toISOString();
+    await expect(steps.check(waitContext)).resolves.toEqual({ kind: "done", value: "no-checks", note: "No checks were reported within 10 minutes" });
+
+    Object.assign(checks, { total: 3, completed: 2, successful: 2, running: 1 });
+    state.polledAt = null;
+    await expect(steps.check(waitContext)).resolves.toEqual({ kind: "waiting" });
+    Object.assign(checks, { completed: 3, successful: 3, running: 0 });
+    state.polledAt = null;
+    await expect(steps.check(waitContext)).resolves.toEqual({ kind: "done", value: "passing", note: "3/3 checks passed" });
+  });
+
   it("keeps shell approvals on for runs started by an issue", async () => {
     const { steps, services, stepContext } = await setup();
     await expect(steps.begin(stepContext)).resolves.toEqual({ kind: "waiting" });

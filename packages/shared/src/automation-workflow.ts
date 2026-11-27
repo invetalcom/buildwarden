@@ -158,6 +158,7 @@ export const AUTOMATION_STEP_VALUE_LABELS: Record<string, string> = {
   merged: "Merged",
   closed: "Closed",
   timeout: "Timed out",
+  "no-checks": "No checks",
 };
 
 export const automationStepValueLabel = (value: string): string => AUTOMATION_STEP_VALUE_LABELS[value] ?? value;
@@ -170,7 +171,7 @@ export const automationStepValues = (step: AutomationStepDefinition | { kind: "a
     case "council": return step.fixFindings ? ["clean", "fixed"] : ["clean", "issues"];
     case "verify": return ["passed", "failed"];
     case "open-pr": return ["opened", "no-changes"];
-    case "wait-pr": return step.until === "checks" ? ["passing", "failing", "merged", "closed", "timeout"] : ["merged", "closed", "timeout"];
+    case "wait-pr": return step.until === "checks" ? ["passing", "failing", "no-checks", "merged", "closed", "timeout"] : ["merged", "closed", "timeout"];
     case "merge-pr": return ["merged"];
     case "wait": return ["done"];
   }

@@ -45,6 +45,11 @@ export type AutomationStepProgress =
   | { kind: "stop"; reason: string };
 
 const PR_POLL_INTERVAL_MS = 60_000;
+/**
+ * How long a pull request may show no checks at all before the step decides it has none. CI usually
+ * registers its checks within a minute or two of a push; a repository without CI never does.
+ */
+const PR_NO_CHECKS_GRACE_MS = 10 * 60_000;
 const MAX_CONTEXT_ANSWER_CHARS = 4_000;
 const WAITING: AutomationStepProgress = { kind: "waiting" };
 const PENDING: AutomationStepProgress = { kind: "pending" };
@@ -409,8 +414,12 @@ export class AutomationStepService extends AppService<
     if (summary?.state === "closed") return done("closed");
     if (summary && step.until === "checks" && summary.statusLastSyncedAt) {
       const { checks } = summary;
-      const settled = checks.running === 0 && checks.completed >= checks.total;
-      if (settled) return done(checks.failed > 0 ? "failing" : "passing", `${String(checks.successful)}/${String(checks.total)} checks passed`);
+      if (checks.total > 0 && checks.running === 0 && checks.completed >= checks.total) {
+        return done(checks.failed > 0 ? "failing" : "passing", `${String(checks.successful)}/${String(checks.total)} checks passed`);
+      }
+      // No checks yet can mean CI has not started; only a long silence means the repository has none.
+      const waited = Date.now() - Date.parse(state.startedAt ?? state.polledAt);
+      if (checks.total === 0 && waited >= PR_NO_CHECKS_GRACE_MS) return done("no-checks", "No checks were reported within 10 minutes");
     }
     return timedOut ? done("timeout") : WAITING;
   }
