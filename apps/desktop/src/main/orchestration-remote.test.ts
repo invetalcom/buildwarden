@@ -194,6 +194,8 @@ describe("delegating to a linked host", () => {
     await delegate("t3", { remoteProjectId: "missing-project" });
     await vi.waitFor(() => expect(taskByClientId("t3").status).toBe("failed"));
     expect(taskByClientId("t3").errorMessage).toContain("Build box could not start the task");
+    // The request reached the host, so whether it made a run is unknown.
+    expect(taskByClientId("t3").errorMessage).toContain("check that host");
     await expect(delegate("t4", { hostId: "nope" })).resolves.toMatchObject({ ok: false, body: { error: { code: "invalid_arguments" } } });
   });
 
@@ -388,27 +390,51 @@ describe("delegating to a linked host", () => {
     expect(taskByClientId("t24")).toMatchObject({ status: "cancelled", remote: { stopPending: false }, attentionReason: expect.stringContaining("Check that host") });
     expect(db.listOrchestrationEvents(task.orchestrationId).some((event) => event.taskId === task.id && event.type === "attention" && event.content.includes("Check that host"))).toBe(true);
     // Let the held start end before the test's database closes.
-    const resolveStartStop = vi.spyOn(remote as unknown as { resolveStartStop: (task: unknown, warn: boolean) => Promise<void> }, "resolveStartStop");
+    const resolveStartStop = vi.spyOn(remote as unknown as { resolveStartStop: (task: unknown, outcome: string) => Promise<void> }, "resolveStartStop");
     failStart();
-    await vi.waitFor(() => expect(resolveStartStop).toHaveBeenCalledWith(expect.anything(), false));
+    await vi.waitFor(() => expect(resolveStartStop).toHaveBeenCalledWith(expect.anything(), "unknown"));
     await resolveStartStop.mock.results.at(-1)?.value;
   });
 
-  it("drops the pending stop of a task cancelled during a start the host refused", async () => {
-    const { db, controller, delegate, taskByClientId, remote } = await setup();
+  it("warns about a task cancelled during its start when the host made the run but its answer was lost", async () => {
+    const { db, controller, host, delegate, taskByClientId, remote } = await setup();
     const linkedHosts = serviceOf(controller, "linkedHosts");
     const call = linkedHosts.callHostTool.bind(linkedHosts);
     vi.spyOn(linkedHosts, "callHostTool").mockImplementation(async (hostId, name, args, signal) => {
+      const answer = await call(hostId, name, args, signal);
       if (name === "start_run") {
         const task = taskByClientId("t25");
         await serviceOf(controller, "orchestration").cancelOrchestrationTasks(db.getOrchestration(task.orchestrationId), [task.id]);
-        throw new Error("project is archived");
+        throw new Error("socket hang up");
       }
-      return await call(hostId, name, args, signal) as never;
+      return answer as never;
     });
     await delegate("t25");
     await vi.waitFor(() => expect(remote.isStarting(taskByClientId("t25").id)).toBe(false));
-    expect(taskByClientId("t25")).toMatchObject({ status: "cancelled", remote: { runId: null, stopPending: false }, attentionReason: null });
+    expect(host.created).toHaveLength(1);
+    expect(taskByClientId("t25")).toMatchObject({
+      status: "cancelled", remote: { runId: null, stopPending: false }, attentionReason: expect.stringContaining("Check that host"),
+    });
+    const task = taskByClientId("t25");
+    expect(db.listOrchestrationEvents(task.orchestrationId).some((event) => event.taskId === task.id && event.type === "attention" && event.content.includes("Check that host"))).toBe(true);
+  });
+
+  it("drops the pending stop without a warning when the start failed before reaching the host", async () => {
+    const { db, controller, host, delegate, taskByClientId, remote } = await setup();
+    const linkedHosts = serviceOf(controller, "linkedHosts");
+    const call = linkedHosts.callHostTool.bind(linkedHosts);
+    vi.spyOn(linkedHosts, "callHostTool").mockImplementation(async (hostId, name, args, signal) => {
+      if (name === "list_projects") {
+        const task = taskByClientId("t26");
+        await serviceOf(controller, "orchestration").cancelOrchestrationTasks(db.getOrchestration(task.orchestrationId), [task.id]);
+        throw new Error("connect ECONNREFUSED");
+      }
+      return await call(hostId, name, args, signal) as never;
+    });
+    await delegate("t26");
+    await vi.waitFor(() => expect(remote.isStarting(taskByClientId("t26").id)).toBe(false));
+    expect(host.created).toEqual([]);
+    expect(taskByClientId("t26")).toMatchObject({ status: "cancelled", remote: { runId: null, stopPending: false }, attentionReason: null });
   });
 
   it("does not delete the coordinator while a host run's unsaved stop is unconfirmed", async () => {

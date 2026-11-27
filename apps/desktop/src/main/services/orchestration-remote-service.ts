@@ -105,6 +105,11 @@ export class OrchestrationRemoteService extends AppService<"linkedHosts" | "orch
     const coordinator = this.db.getRun(orchestration.coordinatorRunId);
     /** Set once the host created its run: from then on a failure must leave that run an owner. */
     let startedRemote: OrchestrationTaskRemote | null = null;
+    /**
+     * Set once start_run is sent. Until then the host cannot have a run; after it, a failed request
+     * leaves that unknown, since the host may have created the run before the answer was lost.
+     */
+    let startRequested = false;
     try {
       const projectId = remote.projectId ?? await this.matchHostProject(remote, coordinator);
       const role = orchestration.teamSnapshot.roles.find((entry) => entry.id === task.roleId);
@@ -116,6 +121,7 @@ export class OrchestrationRemoteService extends AppService<"linkedHosts" | "orch
         "",
         `This task runs on the linked host ${remote.hostLabel}, apart from the coordinator's machine. Your changes stay in this run's workspace there.`,
       ].join("\n");
+      startRequested = true;
       const started = await this.services.linkedHosts.callHostTool<{ run: RemoteRunSummary }>(remote.hostId, "start_run", {
         projectId, prompt, mode: task.intent === "inspect" ? "ask" : "code", ...(remote.modelId ? { modelId: remote.modelId } : {}),
       });
@@ -157,9 +163,10 @@ export class OrchestrationRemoteService extends AppService<"linkedHosts" | "orch
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (!startedRemote) {
-        await this.settle(task.id, { status: "failed", summary: null, errorMessage: `${remote.hostLabel} could not start the task: ${message}` });
-        // A cancellation during the start saved a stop for a run the host did not create.
-        await this.resolveStartStop(task, false);
+        const check = startRequested ? " The request reached the host, which may have started a run anyway; check that host before delegating it again." : "";
+        await this.settle(task.id, { status: "failed", summary: null, errorMessage: `${remote.hostLabel} could not start the task: ${message}${check}` });
+        // A cancellation during the start saved a stop for a run the host may or may not have made.
+        await this.resolveStartStop(task, startRequested ? "unknown" : "not-sent");
         return;
       }
       // The host runs the task, but BuildWarden could not record it. The task fails here, and its
@@ -252,7 +259,7 @@ export class OrchestrationRemoteService extends AppService<"linkedHosts" | "orch
     }
     for (const task of awaitingStop) {
       if (task.remote?.runId) await this.retryPendingStop(task);
-      else await this.resolveStartStop(task, true);
+      else await this.resolveStartStop(task, "restart");
     }
     for (const [taskId, unsaved] of [...this.unsavedStops]) {
       // Once saved, the stop is a durable obligation like any other and survives a restart.
@@ -349,20 +356,25 @@ export class OrchestrationRemoteService extends AppService<"linkedHosts" | "orch
 
   /**
    * Settles the pending stop a cancellation saved while the task's host was starting its run, which
-   * has no run id. A start still under way, or a stop held in memory, owns it. Otherwise the start
-   * ended without recording a run: after a failed start request (`warn` false) the host made none,
-   * and after a restart (`warn` true) it may have, so the user is told to check that host.
+   * has no run id. The start ended without recording a run, and `outcome` says what is known:
+   * - `not-sent`: the start request never reached the host, which therefore made no run.
+   * - `unknown`: the request was sent and failed, so the host may have made a run anyway.
+   * - `restart`: polling found the stop; a start still under way, or a stop held in memory, owns
+   *   it, and otherwise the app stopped while starting, so the host's answer is lost.
+   * When the host may have a run, the user is told to check that host.
    */
-  private async resolveStartStop(task: OrchestrationTaskRecord, warn: boolean): Promise<void> {
+  private async resolveStartStop(task: OrchestrationTaskRecord, outcome: "not-sent" | "unknown" | "restart"): Promise<void> {
     try {
       await this.services.orchestration.withOrchestrationMutation(task.orchestrationId, async () => {
         const current = this.db.findOrchestrationTask(task.id);
         const remote = current?.remote;
         if (!current || !remote?.stopPending || remote.runId) return;
-        if (warn && (this.starting.has(task.id) || this.unsavedStops.has(task.id))) return;
-        const reason = warn
+        if (outcome === "restart" && (this.starting.has(task.id) || this.unsavedStops.has(task.id))) return;
+        const reason = outcome === "restart"
           ? `BuildWarden stopped while starting this cancelled task on ${remote.hostLabel}. Check that host for a run and stop it there.`
-          : null;
+          : outcome === "unknown"
+            ? `The start request for this cancelled task failed after it reached ${remote.hostLabel}, which may have started a run anyway. Check that host for a run and stop it there.`
+            : null;
         this.db.transaction(() => {
           this.db.updateOrchestrationTask(task.id, { remote: { ...remote, stopPending: false }, ...(reason ? { attentionReason: reason } : {}) });
           if (reason) this.db.appendOrchestrationEvent({ orchestrationId: task.orchestrationId, taskId: task.id, type: "attention", title: current.title, content: reason });
