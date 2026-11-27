@@ -19,6 +19,7 @@ import { getCompileCacheWorkerData } from "../compile-cache";
 import { resolveMcpServerRuntimeConfigs } from "../mcp-server-registry";
 import { ORCHESTRATION_TOOL_DEFINITIONS } from "../orchestration-tools";
 import { AppService } from "./app-service";
+import { requireKnownProvider } from "./provider-model-support";
 import { parseMetadataRecord } from "./run-step-content";
 import { RunWorkerTurn, type RunWorkerTurnDependencies } from "./run-worker-turn";
 
@@ -51,6 +52,7 @@ export class RunWorkerHost extends AppService<RunWorkerTurnDependencies | "orche
     },
   ): Promise<Worker> {
     this.services.activeWorkers.requireAgentWorkersAvailable();
+    requireKnownProvider(provider);
     this.services.workspaceGuard.requireWorkspaceNotRestoring(run.worktreePath);
     const settings = this.db.getSettings();
     try {

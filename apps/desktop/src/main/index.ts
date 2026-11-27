@@ -82,6 +82,7 @@ import { createMainProcessErrorHandlers } from "./main-process-errors";
 import { loadRemoteAuthKey } from "./remote-auth-key";
 import { ElectronSecretStore } from "./secret-store";
 import { registerRunTerminalIpc } from "./run-terminal-ipc";
+import { reconcileStartupState } from "./startup-reconciliation";
 import type { DesktopPlatformServices } from "./desktop-platform-services";
 import { ElectronDesktopPlatformServices, isAppNavigationUrl, isSafeExternalUrl } from "./electron-desktop-platform";
 import { isAllowedEmbeddedFrameUrl } from "./embedded-frame-navigation";
@@ -555,22 +556,7 @@ const bootstrap = async (): Promise<void> => {
       mainWindow.webContents.send(IPC_CHANNELS.runBrowserEvent, event);
     }
   });
-  const startupReconciliation = controller
-    .migrateProjectBaseBranches()
-    .then(() => controller.reconcileOrphanedActiveSessions())
-    .then(() => controller.reconcileOrchestrationsAfterRestart())
-    .then(() => controller.startHistorySearchBackfill())
-    .then(() => controller.reconcileCouncilAfterRestart())
-    .then(() => {
-      // Loops persist their full progress; re-enter their state machines only after the
-      // interrupted-run reconciliation marked orphaned sessions terminal. Resuming on a
-      // failed reconciliation could leave the runner waiting forever on a stale
-      // "running" loop-iteration run that has no worker.
-      controller.resumeActiveProjectLoops();
-    })
-    .catch((error) => {
-      logError("Failed to migrate project state or reconcile active sessions during startup; active loops were not auto-resumed.", { error });
-    })
+  const startupReconciliation = reconcileStartupState(controller, logError)
     .finally(() => {
       controller.startAutomationScheduler();
       if (currentLaunch.kind === "serve") {
