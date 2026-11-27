@@ -1841,9 +1841,9 @@ export const App = () => {
     [runDetail?.run, snapshot.projects],
   );
   const runWorktreeUnavailable = runDetail?.worktreeUnavailable === true;
+  // A delegated child that may delegate in turn coordinates its own agents, so it gets the panel too.
   const selectedRunHasOrchestrationSurface = Boolean(
     runDetail?.run &&
-    runDetail.run.kind !== "orchestration-task" &&
     (runDetail.run.delegationEnabled || runDetail.orchestration),
   );
   // Split views can hold runs from several hosts, and each host grants its own permissions.
@@ -4202,7 +4202,6 @@ export const App = () => {
     const paneLayout = runWorkspaceLayoutsByRunId[entry.runId] ?? cloneDefaultRunWorkspaceLayoutPreference();
     const paneHasOrchestrationSurface = Boolean(
       paneRun &&
-      paneRun.kind !== "orchestration-task" &&
       (paneRun.delegationEnabled || paneDetail?.orchestration),
     );
     const paneHasCouncilSurface = hasCouncilSurface(paneDetail, canOperateRun(entry.runId));
