@@ -2436,6 +2436,10 @@ export const parseOrchestrationTeamSettings = (
 
 export const DEFAULT_ORCHESTRATION_ROLE_ID = "general";
 
+/** The concurrency a model gets in the default team when the user set none for it. */
+export const defaultOrchestrationModelConcurrency = (base: Pick<OrchestrationTeamSettings, "maxConcurrentTasks">): number =>
+  Math.min(2, base.maxConcurrentTasks);
+
 /**
  * The team delegation uses while the user has configured no roles: one general role over every
  * enabled model, preferring `preferredModelId` (usually the coordinator's own model). The limits
@@ -2455,7 +2459,7 @@ export const buildDefaultOrchestrationTeam = (
     ...base,
     models: modelIds.map((modelId) => {
       const profile = profiles.get(modelId);
-      return profile ? { ...profile, enabled: true } : { modelId, enabled: true, maxConcurrent: Math.min(2, base.maxConcurrentTasks) };
+      return profile ? { ...profile, enabled: true } : { modelId, enabled: true, maxConcurrent: defaultOrchestrationModelConcurrency(base) };
     }),
     roles: [{
       id: DEFAULT_ORCHESTRATION_ROLE_ID,

@@ -74,4 +74,25 @@ describe("OrchestrationSettingsTab", () => {
       eligibleModelIds: ["model-1"],
     });
   });
+
+  it("shows the General role's pool without roles: every model unless switched off", () => {
+    const model = (id: string) => ({
+      id, providerAccountId: "provider-1", modelId: id, displayName: id, baseUrlOverride: null, configJson: "{}", capabilitiesJson: "{}",
+      enabled: 1, createdAt: "2026-07-24T00:00:00.000Z", updatedAt: "2026-07-24T00:00:00.000Z",
+    });
+    const render = (models: Array<{ modelId: string; enabled: boolean; maxConcurrent: number }>) => renderToStaticMarkup(
+      <BuildWardenClientProvider client={createElectronBuildWardenClient({} as DesktopApi)}><OrchestrationSettingsTab
+        models={[model("a"), model("b")]}
+        providerAccounts={[]}
+        serializedValue={JSON.stringify({ version: 1, maxConcurrentTasks: 3, maxTasksPerOrchestration: 12, models, roles: [] })}
+        canEdit
+        onSave={vi.fn()}
+      /></BuildWardenClientProvider>,
+    );
+    const untouched = render([]);
+    expect(untouched).toContain("2 active");
+    expect(untouched.match(/aria-checked="true"/g)).toHaveLength(2);
+    expect(untouched).toContain("switch one off to leave it out");
+    expect(render([{ modelId: "a", enabled: false, maxConcurrent: 1 }])).toContain("1 active");
+  });
 });
