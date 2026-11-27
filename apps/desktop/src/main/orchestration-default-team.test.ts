@@ -51,7 +51,9 @@ describe("default orchestration team", () => {
   it("lets a run delegate without any team setup, and keeps a configured team as it is", async () => {
     const { db, controller, coordinator, opus, gpt } = await fixture();
     const orchestration = serviceOf(controller, "orchestration").getOrCreateOrchestration(coordinator);
-    expect(orchestration.teamSnapshot.roles).toEqual([expect.objectContaining({ id: "general", eligibleModelIds: [opus.id, gpt.id], preferredModelId: gpt.id })]);
+    // Models created in the same millisecond list in no fixed order.
+    expect(orchestration.teamSnapshot.roles).toEqual([expect.objectContaining({ id: "general", preferredModelId: gpt.id })]);
+    expect([...orchestration.teamSnapshot.roles[0]!.eligibleModelIds].sort()).toEqual([opus.id, gpt.id].sort());
 
     db.setSetting(APP_SETTING_KEYS.orchestrationTeam, JSON.stringify({
       version: 1, maxConcurrentTasks: 2, maxTasksPerOrchestration: 4,
