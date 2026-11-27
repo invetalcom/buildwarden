@@ -261,7 +261,7 @@ describe("ACP agent running commands in BuildWarden terminals", () => {
     expect(result.summary).toBe("terminal=true exit=0 out=hello");
     // Once for the permission; the terminal then runs that approved command without asking again.
     expect(authorizeShellCommand).toHaveBeenCalledOnce();
-    expect(authorizeShellCommand).toHaveBeenCalledWith(expect.stringContaining("console.log('hello')"), { yoloMode: false });
+    expect(authorizeShellCommand).toHaveBeenCalledWith(terminalCommandLine(process.execPath, ["-e", "console.log('hello')"]), { yoloMode: false });
   });
 
   it("does not let another call borrow an approved terminal in an inspect turn", async () => {
