@@ -86,15 +86,25 @@ export class OrchestrationRemoteService extends AppService<"linkedHosts" | "orch
       const started = await this.services.linkedHosts.callHostTool<{ run: RemoteRunSummary }>(remote.hostId, "start_run", {
         projectId, prompt, mode: task.intent === "inspect" ? "ask" : "code", ...(remote.modelId ? { modelId: remote.modelId } : {}),
       });
-      await this.services.orchestration.withOrchestrationMutation(task.orchestrationId, async () => {
-        this.db.updateOrchestrationTask(task.id, { status: "running", startedAt: new Date().toISOString(), remote: { ...remote, projectId, runId: started.run.id } });
+      const startedRemote = { ...remote, projectId, runId: started.run.id };
+      const cancelledWhileStarting = await this.services.orchestration.withOrchestrationMutation(task.orchestrationId, async () => {
+        // A cancellation can commit while start_run is on its way; the task must not come back to life.
+        if (this.db.getOrchestrationTask(task.id).status !== "provisioning") return true;
+        this.db.updateOrchestrationTask(task.id, { status: "running", startedAt: new Date().toISOString(), remote: startedRemote });
         this.db.appendOrchestrationEvent({
           orchestrationId: task.orchestrationId, taskId: task.id, type: "task-started", title: task.title,
           content: `Started on ${remote.hostLabel} as run ${started.run.id}.`, metadata: { remoteHostId: remote.hostId, remoteRunId: started.run.id },
         });
         await this.db.flushDurable();
         this.services.orchestration.emitOrchestrationChanged(task.orchestrationId, task.id);
+        return false;
       });
+      if (cancelledWhileStarting) {
+        // The cancellation found no host run to stop; stop the one the host created since.
+        await this.cancelRemoteRun({ ...task, remote: startedRemote })
+          .catch((error: unknown) => this.logControllerWarn("Could not stop a remote run started after its task was cancelled.", { taskId: task.id, error }));
+        return;
+      }
       this.ensurePolling();
     } catch (error) {
       await this.settle(task.id, { status: "failed", summary: null, errorMessage: `${remote.hostLabel} could not start the task: ${error instanceof Error ? error.message : String(error)}` });
@@ -183,7 +193,10 @@ export class OrchestrationRemoteService extends AppService<"linkedHosts" | "orch
   /** A host run that waits for the user needs the coordinator's attention, and the user's. */
   private async recordWaiting(task: OrchestrationTaskRecord, waitingFor: "approval" | "input" | null): Promise<void> {
     await this.services.orchestration.withOrchestrationMutation(task.orchestrationId, async () => {
-      const remote = task.remote!;
+      // The task may have ended or been cancelled since the poll read it.
+      const current = this.db.getOrchestrationTask(task.id);
+      if (current.status !== "running" && current.status !== "waiting-input") return;
+      const remote = current.remote!;
       const reason = waitingFor ? describeWaiting(waitingFor, remote.hostLabel) : null;
       this.db.updateOrchestrationTask(task.id, { status: waitingFor ? "waiting-input" : "running", attentionReason: reason, remote: { ...remote, waitingFor } });
       if (reason) {

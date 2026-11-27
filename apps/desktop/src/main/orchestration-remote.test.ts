@@ -191,6 +191,24 @@ describe("delegating to a linked host", () => {
     expect(host.created).toHaveLength(1);
   });
 
+  it("stops the host's run when the task was cancelled while the host was starting it", async () => {
+    const { db, controller, host, delegate, taskByClientId } = await setup();
+    const linkedHosts = serviceOf(controller, "linkedHosts");
+    const call = linkedHosts.callHostTool.bind(linkedHosts);
+    vi.spyOn(linkedHosts, "callHostTool").mockImplementation(async (hostId, name, args, signal) => {
+      const answer = await call(hostId, name, args, signal);
+      if (name === "start_run") {
+        // The user cancels while the host's answer is on its way.
+        const task = taskByClientId("t8");
+        await serviceOf(controller, "orchestration").cancelOrchestrationTasks(db.getOrchestration(task.orchestrationId), [task.id]);
+      }
+      return answer as never;
+    });
+    await delegate("t8");
+    await vi.waitFor(() => expect(host.cancelled).toEqual(["host-run-1"]));
+    expect(taskByClientId("t8")).toMatchObject({ status: "cancelled", remote: { runId: null } });
+  });
+
   it("fails the task and releases it when saving it before the start fails", async () => {
     const { db, host, delegate, taskByClientId, remote } = await setup();
     const save = db.flushDurable.bind(db);
