@@ -201,17 +201,20 @@ describe("nested delegation", () => {
     db.updateOrchestration(created.id, { teamSnapshot: { ...created.teamSnapshot, maxTotalTokens: 1_000 } });
     const top = db.getOrchestration(created.id);
     const { child } = addChild(top, root, "c1");
+    // A sibling's tokens count only above the nested orchestration, so only the ancestor check sees them.
+    const { child: sibling } = addChild(top, root, "c2");
     const nested = orchestration.getOrCreateOrchestration(child);
     expect(nested.teamSnapshot.maxTotalTokens).toBe(1_000);
     const { child: grandchild } = addChild(nested, child, "g1");
     const setTokens = (runId: string, tokens: number) =>
       (db as unknown as { run(sql: string, params: unknown[]): void }).run("update runs set input_tokens = ?, output_tokens = 0 where id = ?", [tokens, runId]);
-    setTokens(child.id, 300);
+    setTokens(sibling.id, 300);
     setTokens(grandchild.id, 600);
     expect(db.getOrchestrationTotalTokens(top.id)).toBe(900);
     expect(orchestration.orchestrationBudgetExhaustion(db.getOrchestration(nested.id))).toBeNull();
     setTokens(grandchild.id, 800);
     // The nested orchestration alone stays below 1,000, but the tree above it does not.
+    expect(db.getOrchestrationTotalTokens(nested.id)).toBe(800);
     expect(orchestration.orchestrationBudgetExhaustion(db.getOrchestration(nested.id))).toMatchObject({ kind: "tokens", limit: 1_000, observed: 1_100 });
 
     // A settings change gives the nested part no budget of its own.
