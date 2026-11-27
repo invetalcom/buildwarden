@@ -153,6 +153,9 @@ export const runMcpStdioRelay = async (options: McpStdioRelayOptions): Promise<v
         },
         body: JSON.stringify(message),
         signal: open.signal,
+        // A redirect would take the configured headers, credentials among them, and the request
+        // body to another address. The relay talks only to the URL it was given.
+        redirect: "error",
       });
       const session = response.headers.get("mcp-session-id");
       if (session) sessionId = session;
@@ -214,7 +217,7 @@ export const runMcpStdioRelay = async (options: McpStdioRelayOptions): Promise<v
   clearTimeout(drainTimer);
   open.abort();
   if (sessionId) {
-    await fetcher(options.url, { method: "DELETE", signal: AbortSignal.timeout(waitMs), headers: {
+    await fetcher(options.url, { method: "DELETE", signal: AbortSignal.timeout(waitMs), redirect: "error", headers: {
       ...options.headers, "Mcp-Session-Id": sessionId, ...(protocolVersion ? { "MCP-Protocol-Version": protocolVersion } : {}),
     } })
       .then((response) => response.body?.cancel()).catch(() => undefined);

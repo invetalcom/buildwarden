@@ -130,6 +130,17 @@ describe("MCP stdio relay against an HTTP endpoint", () => {
     ]);
   });
 
+  it("never follows a redirect, so headers and bodies reach only the configured URL", async () => {
+    const { seen, fetcher } = fakeEndpoint((body) => body.method === "initialize"
+      ? jsonResponse(initializeResult(body.id), { "mcp-session-id": "s1" })
+      : jsonResponse({ jsonrpc: "2.0", id: body.id, result: {} }));
+    await relayLines(fetcher, [
+      { jsonrpc: "2.0", id: 1, method: "initialize", params: {} },
+      { jsonrpc: "2.0", id: 2, method: "tools/list" },
+    ]);
+    expect(seen.map((entry) => entry.redirect)).toEqual(["error", "error", "error"]);
+  });
+
   it("opens a new session when the server forgot the old one, without repeating the failed call", async () => {
     let sessions = 0;
     const { seen, fetcher } = fakeEndpoint((body) => {
