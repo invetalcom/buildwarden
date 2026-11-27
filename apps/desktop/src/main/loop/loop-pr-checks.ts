@@ -41,6 +41,8 @@ const runCouncilCheck = async (host: LoopPrCheckHost, run: RunRecord): Promise<v
     return;
   }
   round = await waitForRound(host, round.id);
+  // A council that applies its findings on its own can fail to apply them; that must not open the PR either.
+  if (round.status === "apply-failed") throw new Error(round.error?.trim() || "Fixing the council findings failed.");
   if (round.status !== "ready" && round.status !== "applied") {
     host.appendEvent("Council review skipped", round.error?.trim() || "The council review could not finish.");
     return;

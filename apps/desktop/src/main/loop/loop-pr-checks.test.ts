@@ -51,6 +51,11 @@ describe("loop checks before a pull request", () => {
     expect(events.map(([label]) => label)).toEqual(["Council review", "Council findings fixed"]);
   });
 
+  it("fails when the council could not apply its own fixes", async () => {
+    const { host } = createHost({ getCouncilRound: () => round({ status: "apply-failed", error: "The fix turn failed." }) });
+    await expect(runLoopPrChecks(host, { councilBeforePr: true, verifyBeforePr: false }, run)).rejects.toThrow("The fix turn failed.");
+  });
+
   it("goes on without a council review that cannot start", async () => {
     const { host, events } = createHost({ startCouncil: async () => { throw new Error("No reviewers are configured."); } });
     await runLoopPrChecks(host, { councilBeforePr: true, verifyBeforePr: false }, run);
