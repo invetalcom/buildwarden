@@ -17,6 +17,9 @@ import { fileURLToPath } from "node:url";
 export const MCP_RELAY_URL_ENV = "BUILDWARDEN_MCP_RELAY_URL";
 export const MCP_RELAY_HEADERS_ENV = "BUILDWARDEN_MCP_RELAY_HEADERS";
 
+/** How long open answers may still finish once the agent closed stdin, and how long the closing DELETE may take. */
+const SHUTDOWN_WAIT_MS = 5_000;
+
 /** One event-stream event, or one JSON body, larger than this ends the relay rather than its memory. */
 const MAX_MESSAGE_CHARS = 16 * 1_048_576;
 
@@ -92,6 +95,8 @@ export interface McpStdioRelayOptions {
   /** Receives each message for the agent; stdout by default. */
   write?: Write;
   fetcher?: typeof fetch;
+  /** How long shutdown waits for open answers, and then for the DELETE. */
+  shutdownWaitMs?: number;
 }
 
 /** Relays until stdin ends. Resolves after the remote session was closed. */
@@ -107,6 +112,8 @@ export const runMcpStdioRelay = async (options: McpStdioRelayOptions): Promise<v
   /** Initialization must finish first: its response carries the session every later call names. */
   let initialized: Promise<void> = Promise.resolve();
   const inFlight = new Set<Promise<void>>();
+  /** Aborts the requests still open when shutdown stops waiting for them. */
+  const open = new AbortController();
   /** The agent's own initialize request, repeated when the server ends the session. */
   let initializeMessage: JsonRpcMessage | null = null;
   let reconnects = 0;
@@ -145,6 +152,7 @@ export const runMcpStdioRelay = async (options: McpStdioRelayOptions): Promise<v
           ...(protocolVersion ? { "MCP-Protocol-Version": protocolVersion } : {}),
         },
         body: JSON.stringify(message),
+        signal: open.signal,
       });
       const session = response.headers.get("mcp-session-id");
       if (session) sessionId = session;
@@ -196,10 +204,17 @@ export const runMcpStdioRelay = async (options: McpStdioRelayOptions): Promise<v
     const task: Promise<void> = initialized.then(() => post(message)).finally(() => inFlight.delete(task));
     inFlight.add(task);
   }
-  await initialized;
-  await Promise.allSettled([...inFlight]);
+  // A stream the server keeps open, or a server that stopped answering, must not keep the relay alive.
+  const waitMs = options.shutdownWaitMs ?? SHUTDOWN_WAIT_MS;
+  let drainTimer: ReturnType<typeof setTimeout> | undefined;
+  await Promise.race([
+    initialized.then(() => Promise.allSettled([...inFlight])),
+    new Promise((resolve) => { drainTimer = setTimeout(resolve, waitMs); }),
+  ]);
+  clearTimeout(drainTimer);
+  open.abort();
   if (sessionId) {
-    await fetcher(options.url, { method: "DELETE", headers: {
+    await fetcher(options.url, { method: "DELETE", signal: AbortSignal.timeout(waitMs), headers: {
       ...options.headers, "Mcp-Session-Id": sessionId, ...(protocolVersion ? { "MCP-Protocol-Version": protocolVersion } : {}),
     } })
       .then((response) => response.body?.cancel()).catch(() => undefined);

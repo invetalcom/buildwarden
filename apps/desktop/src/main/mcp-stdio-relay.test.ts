@@ -157,6 +157,29 @@ describe("MCP stdio relay against an HTTP endpoint", () => {
     expect(seen.at(-1)).toMatchObject({ method: "DELETE", headers: { "Mcp-Session-Id": "s2" } });
   });
 
+  it("stops waiting for a stream the server keeps open, and for a DELETE that never answers", async () => {
+    const methods: string[] = [];
+    const never = (signal: AbortSignal | null | undefined) => new Promise<Response>((_resolve, reject) => {
+      signal?.addEventListener("abort", () => reject(signal.reason as Error), { once: true });
+    });
+    const fetcher = (async (_url: string | URL | Request, init?: RequestInit) => {
+      const body = typeof init?.body === "string" ? JSON.parse(init.body) as Record<string, unknown> : {};
+      methods.push(init?.method === "DELETE" ? "DELETE" : String(body.method));
+      if (init?.method === "DELETE") return never(init.signal);
+      if (body.method === "initialize") return jsonResponse(initializeResult(body.id), { "mcp-session-id": "s1" });
+      // An event stream that never ends.
+      return new Response(new ReadableStream({ start() {} }), { headers: { "content-type": "text/event-stream" } });
+    }) as typeof fetch;
+    const input = new PassThrough();
+    const done = runMcpStdioRelay({ url: "http://127.0.0.1:1/mcp", headers: {}, input, write: () => undefined, fetcher, shutdownWaitMs: 50 });
+    input.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} })}\n`);
+    input.end(`${JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "wait" } })}\n`);
+    const started = Date.now();
+    await done;
+    expect(Date.now() - started).toBeLessThan(2_000);
+    expect(methods).toEqual(["initialize", "tools/call", "DELETE"]);
+  });
+
   it("stops reading a JSON body at its limit instead of buffering all of it", async () => {
     let pulled = 0;
     let cancelled = false;
