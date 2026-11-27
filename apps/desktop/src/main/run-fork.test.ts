@@ -242,6 +242,16 @@ describe("forkRun", () => {
     expect(readdirSync(join(run.worktreePath, ".."))).toEqual([basename(run.worktreePath)]);
   });
 
+  it("removes the fork's workspace when reading the agent's fork support fails", async () => {
+    const { db, controller, run, secondAnswer } = await setup({ acp: true });
+    const read = vi.spyOn(serviceOf(controller, "providerRuntime"), "sessionCapabilityReport").mockImplementation(() => { throw new Error("provider gone"); });
+    await expect(controller.forkRun({ runId: run.id, stepId: secondAnswer.id })).rejects.toThrow("provider gone");
+    read.mockRestore();
+    const runs = db.listRunsWithStatuses(["queued", "preparing", "running", "completed", "failed", "cancelled"]);
+    expect(runs.filter((entry) => entry.parentRunId === run.id)).toHaveLength(0);
+    expect(readdirSync(join(run.worktreePath, ".."))).toEqual([basename(run.worktreePath)]);
+  });
+
   it("takes the summary a rewind that ran first left behind", async () => {
     const { db, controller, run, firstAnswer } = await setup();
     db.updateRunStatus(run.id, "completed", { summary: "Wrote turn two." });

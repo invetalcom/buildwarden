@@ -85,7 +85,10 @@ export class RunForkService extends AppService<"activeWorkers" | "providerRuntim
     const lastPrompt = parseMetadataRecord([...kept].reverse().find(isTurnPrompt)?.metadataJson ?? "{}");
     const model = this.resolveTurnModel(lastPrompt.modelId, source);
     let fork: RunRecord;
+    let nativeFork: Omit<ProviderSessionRuntimeInput, "ownerId" | "ownerKind" | "status" | "cwd"> | null = null;
     try {
+      // Inside the cleanup scope: reading the agent's capabilities can fail after the workspace exists.
+      nativeFork = nextPrompt ? null : this.nativeSessionFork(source, model);
       fork = this.db.createRun({
         projectId: project.id,
         providerAccountId: model.providerAccountId,
@@ -106,7 +109,6 @@ export class RunForkService extends AppService<"activeWorkers" | "providerRuntim
       throw error;
     }
 
-    const nativeFork = nextPrompt ? null : this.nativeSessionFork(source, model);
     const metadata = { forkedFromRunId: source.id, forkedFromStepId: input.stepId, forkFiles: files, ...(nativeFork ? { nativeSessionFork: true } : {}) };
     const sessionNote = nativeFork
       ? "The next message continues a fork of the agent's own session; if the agent cannot fork it, a fresh session receives this conversation."
