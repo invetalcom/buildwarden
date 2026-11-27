@@ -11,8 +11,12 @@ import type { HarnessRunChunk, HarnessToolContext, HarnessToolName, RunExecution
 vi.setConfig({ testTimeout: 30_000 });
 
 const RELAY_SOURCE = fileURLToPath(new URL("../../../../packages/agent-runtime/src/mcp-stdio-relay-main.ts", import.meta.url));
-/** Node runs the relay's TypeScript source directly, as Electron runs its bundled copy. */
-const relayLaunch = { command: process.execPath, args: [RELAY_SOURCE] };
+/**
+ * Node runs the relay's TypeScript source directly, as Electron runs its bundled copy. Node strips
+ * types by default from 22.18 and 23.6; earlier releases from 22.6 need the flag.
+ */
+const nodeStripsTypes = Boolean((process.features as { typescript?: unknown }).typescript);
+const relayLaunch = { command: process.execPath, args: [...(nodeStripsTypes ? [] : ["--experimental-strip-types"]), RELAY_SOURCE] };
 
 const roots: string[] = [];
 afterEach(() => {
