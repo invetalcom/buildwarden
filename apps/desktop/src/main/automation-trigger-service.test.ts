@@ -89,6 +89,22 @@ describe("automation triggers", () => {
     expect(JSON.parse(db.getProjectAutomationTriggerState(automation.id) ?? "{}")).toEqual({ kind: "pr-opened", highest: 9 });
   });
 
+  it("refuses a loop made by two edits saved at the same time", async () => {
+    const { db, create, services } = await setup();
+    // Reading branches yields, so both edits pass their first check before either is saved.
+    Object.assign(services, { projects: { getProjectBranches: () => new Promise((resolve) => setTimeout(() => resolve(["main"]), 20)) } });
+    const context = new AppServiceContext(db, {} as never, "", {} as never, { killForRunId: vi.fn() }, new HostEventBus());
+    const automations = new AutomationService(context, services);
+    const first = create("First", { kind: "manual" });
+    const second = create("Second", { kind: "manual" });
+    const results = await Promise.allSettled([
+      automations.updateProjectAutomation(first.id, { trigger: { kind: "automation-finished", automationId: second.id, outcome: "any" } }),
+      automations.updateProjectAutomation(second.id, { trigger: { kind: "automation-finished", automationId: first.id, outcome: "any" } }),
+    ]);
+    expect(results.map((result) => result.status).sort()).toEqual(["fulfilled", "rejected"]);
+    expect(results.find((result) => result.status === "rejected")).toMatchObject({ reason: { message: "These automations would start each other in a loop." } });
+  });
+
   it("refuses automations that would start each other in a loop", async () => {
     const { db, project, create, services } = await setup();
     Object.assign(services, { projects: { getProjectBranches: async () => ["main"] } });

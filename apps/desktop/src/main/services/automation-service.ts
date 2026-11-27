@@ -164,6 +164,8 @@ export class AutomationService extends AppService<
       // The check and the write below run without yielding, so nothing can slip in between them.
       const current = this.db.getProjectAutomation(automationId);
       if (isSameProjectAutomationRevision(current, existing)) {
+        // Another automation may have started following this one while Git was read; a loop is checked again here.
+        this.validateAutomationTrigger(current.projectId, parseAutomationTrigger(update.input.trigger), automationId);
         return this.db.updateProjectAutomation(automationId, update.input, update.nextRunAt, update.timeZone);
       }
       if (attempt >= 3) throw new Error("This automation changed while it was being saved. Try again.");
