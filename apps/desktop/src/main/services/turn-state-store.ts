@@ -329,10 +329,7 @@ export class TurnStateStore extends AppService {
       const run = this.db.getRun(runId);
       // A run that has handed out tasks can be neither forked nor rewound, so nothing would use the point.
       if (run.kind !== "standard" || this.db.getOrchestrationByCoordinatorRunId(run.id)) return;
-      const step = [...this.db.getRunSteps(runId)].reverse().find((entry) => {
-        const meta = parseMetadataRecord(entry.metadataJson);
-        return meta.source === "user" && meta.commandType === commandType;
-      });
+      const step = this.db.getLatestUserCommandStep(runId, commandType);
       if (!step) return;
       const snapshot = this.getRunPromptRestorePoint(runId);
       this.db.saveRunTurnRestorePoint(runId, { id: randomUUID(), stepId: step.id, prompt: step.content,

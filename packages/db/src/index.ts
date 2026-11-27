@@ -5089,6 +5089,32 @@ export class BuildWardenDatabase {
     );
   }
 
+  /**
+   * The latest step a user sent with this command type, such as the prompt that starts a turn.
+   * Metadata is matched in SQL, so the other steps of a long run are not loaded.
+   */
+  getLatestUserCommandStep(runId: string, commandType: string): RunStepRecord | null {
+    return this.first<RunStepRecord>(
+      `
+      select
+        id,
+        run_id as runId,
+        event_type as eventType,
+        title,
+        content,
+        metadata_json as metadataJson,
+        created_at as createdAt
+      from run_steps
+      where run_id = ? and json_valid(metadata_json)
+        and json_extract(metadata_json, '$.source') = 'user'
+        and json_extract(metadata_json, '$.commandType') = ?
+      order by created_at desc, rowid desc
+      limit 1
+      `,
+      [runId, commandType],
+    );
+  }
+
   /** Latest steps in chronological order, truncated in SQL so large tool output is never loaded. Skips superseded progress rows. */
   listRecentRunStepPreviews(runId: string, limit: number, maxContentChars: number): RunStepPreview[] {
     if (limit <= 0) return [];
