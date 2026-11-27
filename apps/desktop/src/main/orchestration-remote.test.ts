@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { BuildWardenDatabase } from "@buildwarden/db";
 import { RemoteAccessServer, RemoteAuthService, RemoteOperationRegistry, validateNoRemoteArgs } from "@buildwarden/remote-server";
-import { APP_SETTING_KEYS, REMOTE_ACCESS_MCP_PATH, type AppSnapshot, type RunDetail, type RunInput, type RunRecord, type RunToolResult } from "@buildwarden/shared";
+import { APP_SETTING_KEYS, MAX_LINKED_HOSTS, REMOTE_ACCESS_MCP_PATH, type AppSnapshot, type RunDetail, type RunInput, type RunRecord, type RunToolResult } from "@buildwarden/shared";
 import { AppController } from "./app-controller";
 import { internalsOf, serviceOf } from "./controller-test-internals";
 import { HostEventBus } from "./host-events";
@@ -115,6 +115,15 @@ describe("delegating to a linked host", () => {
     expect((await controller.listLinkedHosts()).map((host) => host.label).sort()).toEqual(["A", "B", "Build box", "C"]);
     await Promise.all([controller.removeLinkedHost(linked.id), controller.saveLinkedHost({ label: "D", mcpUrl: "https://d.example.ts.net/mcp", token: "D" })]);
     expect((await controller.listLinkedHosts()).map((host) => host.label).sort()).toEqual(["A", "B", "C", "D"]);
+  });
+
+  it("refuses a linked host past the limit before storing its token", async () => {
+    const { controller } = await setup();
+    for (let index = 1; index < MAX_LINKED_HOSTS; index += 1) {
+      await controller.saveLinkedHost({ label: `H${String(index)}`, mcpUrl: `https://h${String(index)}.example.ts.net/mcp`, token: "t" });
+    }
+    await expect(controller.saveLinkedHost({ label: "One more", mcpUrl: "https://more.example.ts.net/mcp", token: "t" })).rejects.toThrow("up to 20 linked hosts");
+    expect(await controller.listLinkedHosts()).toHaveLength(MAX_LINKED_HOSTS);
   });
 
   it("keeps a host's token for a new name, but asks for a new one when its address changes", async () => {

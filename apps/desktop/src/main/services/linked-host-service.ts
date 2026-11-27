@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { McpHttpClient } from "@buildwarden/agent-runtime";
-import { APP_SETTING_KEYS, parseLinkedHostsSetting, type LinkedHostInput, type LinkedHostRecord } from "@buildwarden/shared";
+import { APP_SETTING_KEYS, MAX_LINKED_HOSTS, parseLinkedHostsSetting, type LinkedHostInput, type LinkedHostRecord } from "@buildwarden/shared";
 import { AppService } from "./app-service";
 
 const tokenSecretKey = (hostId: string) => `linked-host-token:${hostId}`;
@@ -51,6 +51,8 @@ export class LinkedHostService extends AppService {
     const hosts = this.listLinkedHosts();
     const existing = input.id ? hosts.find((entry) => entry.id === input.id) : undefined;
     if (input.id && !existing) throw new Error(`Linked host ${input.id} does not exist.`);
+    // Checked before the token is stored: the setting keeps no more, and a host past it would vanish.
+    if (!existing && hosts.length >= MAX_LINKED_HOSTS) throw new Error(`BuildWarden keeps up to ${String(MAX_LINKED_HOSTS)} linked hosts. Remove one first.`);
     const token = input.token?.trim();
     if (!existing && !token) throw new Error("Paste the agent token the host created.");
     // A saved token belongs to the host that issued it; another address must not receive it.

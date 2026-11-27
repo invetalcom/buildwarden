@@ -2550,6 +2550,9 @@ export interface LinkedHostInput {
   token?: string;
 }
 
+/** How many linked hosts the setting keeps; saving one more is refused. */
+export const MAX_LINKED_HOSTS = 20;
+
 export const parseLinkedHostsSetting = (raw: string | undefined | null): LinkedHostRecord[] => {
   if (!raw?.trim()) return [];
   try {
@@ -2561,7 +2564,7 @@ export const parseLinkedHostsSetting = (raw: string | undefined | null): LinkedH
       return typeof id === "string" && typeof label === "string" && typeof mcpUrl === "string" && id && mcpUrl
         ? [{ id, label: label.slice(0, 80), mcpUrl }]
         : [];
-    }).slice(0, 20);
+    }).slice(0, MAX_LINKED_HOSTS);
   } catch {
     return [];
   }
