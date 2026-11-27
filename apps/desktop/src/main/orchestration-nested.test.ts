@@ -176,6 +176,18 @@ describe("nested delegation", () => {
     expect(db.getOrchestrationByCoordinatorRunId(child.id)).toBeNull();
   });
 
+  it("keeps a child's permission to delegate when it restarts from the beginning", async () => {
+    const { db, controller, orchestration, root, addChild } = await fixture(2);
+    const top = orchestration.getOrCreateOrchestration(root);
+    const { task, child } = addChild(top, root, "c1");
+    const startWorker = vi.spyOn(serviceOf(controller, "runWorkerHost"), "startWorker").mockResolvedValue({} as never);
+    const provider = db.getProviderAccount(child.providerAccountId);
+    const model = db.listModels().find((entry) => entry.id === child.modelId)!;
+    await serviceOf(controller, "orchestrationDispatch").restartOrchestrationChildFromBeginning(top, task, child, provider, model);
+    expect(startWorker.mock.calls[0]?.[5]?.promptOverride).toContain("You may delegate parts of this task");
+    serviceOf(controller, "activeWorkers").runWorkers.delete(child.id);
+  });
+
   it("tells a child whether it may delegate", () => {
     const base = { roleName: "Researcher", intent: "inspect", task: "Look", goalText: null };
     expect(buildDelegatedTaskPrompt(base)).toContain("delegate further");

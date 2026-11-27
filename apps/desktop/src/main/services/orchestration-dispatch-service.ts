@@ -544,6 +544,8 @@ export class OrchestrationDispatchService extends AppService<
       });
     const prompt = buildDelegatedTaskPrompt({
       roleName: role?.name ?? task.roleId, roleDescription: role?.description, intent: task.intent, task: task.prompt, goalText: coordinator.goalText,
+      // As at its first start: a child within the depth limit may delegate.
+      mayDelegate: Boolean(child.delegationEnabled),
     });
     this.db.updateRunStatus(child.id, "preparing", { errorMessage: null });
     this.services.skills.skillService.inheritSelection("run", child.id, coordinator.id);
