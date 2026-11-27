@@ -15,6 +15,7 @@ import {
 } from "@buildwarden/shared";
 import { randomUUID } from "node:crypto";
 import { getHarnessTypeForProvider } from "../harness-adapters";
+import { resolveRunForgeSourceRepository } from "../run-forge-source";
 import { AppService } from "./app-service";
 import { ACTIVE_RUN_STATUSES } from "./app-service-constants";
 import { latestRunAnswerText, parseMetadataRecord } from "./run-step-content";
@@ -48,6 +49,14 @@ const MAX_CONTEXT_ANSWER_CHARS = 4_000;
 const WAITING: AutomationStepProgress = { kind: "waiting" };
 const PENDING: AutomationStepProgress = { kind: "pending" };
 const done = (value: string, note?: string | null): AutomationStepProgress => ({ kind: "done", value, note: note ?? null });
+
+/** An open request an interrupted attempt already made: same branch, same target, and the same fork when both are known. */
+export const findRecoverablePullRequest = (
+  items: readonly ProjectForgeRequestSummary[],
+  wanted: { sourceBranch: string; targetBranch: string; sourceRepository: string | null },
+): ProjectForgeRequestSummary | undefined => items.find((item) =>
+  item.sourceBranch === wanted.sourceBranch && item.targetBranch === wanted.targetBranch &&
+  (!wanted.sourceRepository || !item.sourceRepository || item.sourceRepository === wanted.sourceRepository));
 
 const clip = (value: string, max: number): string => (value.length > max ? `${value.slice(0, max)}\n[…]` : value);
 
@@ -367,8 +376,11 @@ export class AutomationStepService extends AppService<
       try {
         return await forge.createRequest({ sourceBranch: current.branchName, targetBranch, title, description });
       } catch (error) {
-        // An interrupted earlier attempt may have opened it already.
-        const existing = (await forge.listRequests({ state: "open" })).items.find((item) => item.sourceBranch === current.branchName);
+        // An interrupted earlier attempt may have opened it already. Only the same branch, target and fork counts.
+        const sourceRepository = await resolveRunForgeSourceRepository(this.gitService, current.worktreePath, current.branchName, forge)
+          .catch(() => null);
+        const { items } = await forge.listRequests({ state: "open", sourceBranch: current.branchName });
+        const existing = findRecoverablePullRequest(items, { sourceBranch: current.branchName, targetBranch, sourceRepository });
         if (!existing) throw error;
         return existing;
       }

@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { HostEventBus } from "./host-events";
 import { AppServiceContext } from "./services/app-service";
 import type { AppServices } from "./services/app-services";
-import { AutomationStepService, type AutomationStepContext } from "./services/automation-step-service";
+import { AutomationStepService, findRecoverablePullRequest, type AutomationStepContext } from "./services/automation-step-service";
 import { automationTriggerInfo } from "./services/automation-trigger-service";
 
 const tempDirs: string[] = [];
@@ -104,6 +104,18 @@ describe("automation agent steps", () => {
     expect(followUp).toHaveBeenCalledTimes(2);
     db.appendRunStep(run.id, "output", "Answer", "ANSWER: no", "{}");
     await expect(steps.check(fixContext)).resolves.toEqual({ kind: "done", value: "no", note: "Is it fixed?" });
+  });
+
+  it("recovers only a pull request with the same branch, target and fork", () => {
+    const request = (targetBranch: string, sourceRepository: string | null) => ({
+      provider: "github", number: 1, title: "", url: `https://example.test/${targetBranch}`, state: "open", draft: false, author: null,
+      sourceBranch: "automation/deps", sourceRepository, targetBranch, createdAt: null, updatedAt: null,
+    } as const);
+    const wanted = { sourceBranch: "automation/deps", targetBranch: "main", sourceRepository: "me/app" };
+    expect(findRecoverablePullRequest([request("release", "me/app")], wanted)).toBeUndefined();
+    expect(findRecoverablePullRequest([request("main", "fork/app")], wanted)).toBeUndefined();
+    expect(findRecoverablePullRequest([request("release", "me/app"), request("main", "me/app")], wanted)?.url).toBe("https://example.test/main");
+    expect(findRecoverablePullRequest([request("main", null)], { ...wanted, sourceRepository: null })?.url).toBe("https://example.test/main");
   });
 
   it("keeps shell approvals on for runs started by an issue", async () => {
