@@ -8,7 +8,7 @@ import { recoverOrchestrationAdoption, removeOwnedOrchestrationArtifact } from "
 import { AppService } from "./app-service";
 import { SELECTED_PROJECT_KEY, SELECTED_RUN_KEY, SESSION_INTERRUPTED_MESSAGE } from "./app-service-constants";
 import { isSettledChildRun } from "./orchestration-policy";
-import { providerSupportsInterruptedRunRecovery } from "./provider-model-support";
+import { providerSupportsInterruptedRunRecovery, unknownProviderReason } from "./provider-model-support";
 import { latestUserTurnUsedFullAccess, resolveOrchestrationChildFullAccess } from "./run-execution-settings";
 
 /** Reconciles orchestrations after a restart and deletes them completely. */
@@ -337,11 +337,14 @@ export class OrchestrationRecoveryService extends AppService<
             }
           });
           const hasAgentActivity = steps.some((step) => AGENT_ACTIVITY_EVENT_TYPES.has(step.eventType));
-          let unsafeReason: string | null = null;
-          if (!existsSync(child.worktreePath)) unsafeReason = "The isolated child workspace is missing.";
-          else if (child.pendingUserInputRequest) unsafeReason = "The child was awaiting user input.";
-          else if (awaitingApproval) unsafeReason = "The child was awaiting an approval.";
-          else if (elevated) unsafeReason = "The child inherited elevated permissions and requires explicit recovery.";
+          // A provider this version cannot run comes first: neither resuming nor a fresh start can run it.
+          let unsafeReason = unknownProviderReason(provider);
+          if (unsafeReason === null) {
+            if (!existsSync(child.worktreePath)) unsafeReason = "The isolated child workspace is missing.";
+            else if (child.pendingUserInputRequest) unsafeReason = "The child was awaiting user input.";
+            else if (awaitingApproval) unsafeReason = "The child was awaiting an approval.";
+            else if (elevated) unsafeReason = "The child inherited elevated permissions and requires explicit recovery.";
+          }
 
           if (unsafeReason) {
             this.db.updateOrchestrationTask(task.id, { status: "blocked", attentionReason: unsafeReason });

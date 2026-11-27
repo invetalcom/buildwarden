@@ -4,7 +4,7 @@ import { executeRunRewind } from "../run-rewind-service";
 import { canonicalWorkspacePath, workspacePathsOverlap } from "../workspace-restore-safety";
 import { AppService } from "./app-service";
 import { SESSION_INTERRUPTED_MESSAGE } from "./app-service-constants";
-import { providerAllowsMissingApiKey, providerSupportsInterruptedRunRecovery } from "./provider-model-support";
+import { providerAllowsMissingApiKey, providerSupportsInterruptedRunRecovery, requireKnownProvider } from "./provider-model-support";
 import { latestRunExecutionSettings } from "./run-execution-settings";
 import { resolveRecoveryKind } from "./run-recovery-kind";
 import { AUTOMATION_RUN_NOTE, latestTurnRequest } from "./run-step-content";
@@ -29,35 +29,79 @@ export class RunRecoveryService extends AppService<
     const activeStatuses: RunRecord["status"][] = ["queued", "preparing", "running"];
     this.services.followUps.reconcileInterruptedFollowUpDeliveries();
 
+    // Every row is handled on its own: one run whose model, provider or worktree cannot be read
+    // must not leave the runs and chats after it marked as running.
     const staleRuns = this.db.listRunsWithStatuses(activeStatuses).filter((run) => !this.services.activeWorkers.runWorkers.has(run.id));
+    const uncancelledRunIds: string[] = [];
     for (const run of staleRuns) {
-      const checkpoint = this.services.turnState.getRunCheckpoint(run.id);
-      const model = this.db.getModel(run.modelId);
-      const provider = this.db.getProviderAccount(model.providerAccountId);
-      const providerRuntime = this.services.turnState.resolveRunNativeSession(run, provider).session;
-      const providerRecoverySupported = providerSupportsInterruptedRunRecovery(provider.providerType);
-      this.db.updateRunStatus(run.id, "cancelled", { errorMessage: SESSION_INTERRUPTED_MESSAGE });
-      this.services.workspaceGuard.updateWorktreeStatus(run, "ready");
-      await this.services.runEvents.appendRunEvent(
-        run.id,
-        "status",
-        "Session interrupted",
-        SESSION_INTERRUPTED_MESSAGE,
-        {
+      const recovery = this.readInterruptedRunRecovery(run);
+      try {
+        this.db.updateRunStatus(run.id, "cancelled", { errorMessage: SESSION_INTERRUPTED_MESSAGE });
+      } catch (error) {
+        this.logControllerError("Could not cancel an interrupted run; the next start tries again.", error, { runId: run.id });
+        uncancelledRunIds.push(run.id);
+        continue;
+      }
+      // The run is no longer picked up at the next start, so each step is attempted even when another fails.
+      const ids = { runId: run.id };
+      await this.attemptRecoveryStep("Could not mark an interrupted run's worktree ready.", ids, () =>
+        this.services.workspaceGuard.updateWorktreeStatus(run, "ready"));
+      await this.attemptRecoveryStep("Marked an interrupted run cancelled but could not record why.", ids, () =>
+        this.services.runEvents.appendRunEvent(run.id, "status", "Session interrupted", SESSION_INTERRUPTED_MESSAGE, {
           sessionInterrupted: true,
-          canRecoverInterruptedSession: providerRecoverySupported && Boolean(checkpoint || providerRuntime?.resumeCursor),
-          recoveryKind: resolveRecoveryKind(providerRecoverySupported, Boolean(checkpoint), Boolean(providerRuntime?.resumeCursor)),
-        },
-      );
+          ...recovery,
+        }));
     }
 
     const staleChats = this.db.listChatsWithStatuses(activeStatuses).filter((chat) => !this.services.activeWorkers.chatWorkers.has(chat.id));
     for (const chat of staleChats) {
-      this.db.closeChatUserInputRequests(chat.id);
-      this.db.updateChatStatus(chat.id, "cancelled", { finishedAt: new Date().toISOString() });
-      await this.services.runEvents.appendChatEvent(chat.id, "status", "Session interrupted", SESSION_INTERRUPTED_MESSAGE, {
-        sessionInterrupted: true,
-      });
+      const ids = { chatId: chat.id };
+      // Together, so a chat whose open questions cannot be closed stays active and the next start tries again.
+      try {
+        this.db.transaction(() => {
+          this.db.closeChatUserInputRequests(chat.id);
+          this.db.updateChatStatus(chat.id, "cancelled", { finishedAt: new Date().toISOString() });
+        });
+      } catch (error) {
+        this.logControllerError("Could not cancel an interrupted chat; the next start tries again.", error, ids);
+        continue;
+      }
+      await this.attemptRecoveryStep("Marked an interrupted chat cancelled but could not record why.", ids, () =>
+        this.services.runEvents.appendChatEvent(chat.id, "status", "Session interrupted", SESSION_INTERRUPTED_MESSAGE, {
+          sessionInterrupted: true,
+        }));
+    }
+
+    // Orchestrations, council rounds and loops read run statuses, so startup must not resume them
+    // while a run that has no worker still reads as running.
+    if (uncancelledRunIds.length > 0) {
+      throw new Error(`Could not cancel ${String(uncancelledRunIds.length)} interrupted run(s): ${uncancelledRunIds.join(", ")}.`);
+    }
+  }
+
+  private async attemptRecoveryStep(failure: string, ids: Record<string, string>, step: () => unknown): Promise<void> {
+    try {
+      await step();
+    } catch (error) {
+      this.logControllerError(failure, error, ids);
+    }
+  }
+
+  /** Whether an interrupted run can continue; a run whose model or provider cannot be read cannot. */
+  private readInterruptedRunRecovery(run: RunRecord): { canRecoverInterruptedSession: boolean; recoveryKind: ReturnType<typeof resolveRecoveryKind> } {
+    try {
+      const checkpoint = Boolean(this.services.turnState.getRunCheckpoint(run.id));
+      const model = this.db.getModel(run.modelId);
+      const provider = this.db.getProviderAccount(model.providerAccountId);
+      const resumeCursor = Boolean(this.services.turnState.resolveRunNativeSession(run, provider).session?.resumeCursor);
+      const supported = providerSupportsInterruptedRunRecovery(provider.providerType);
+      return {
+        canRecoverInterruptedSession: supported && (checkpoint || resumeCursor),
+        recoveryKind: resolveRecoveryKind(supported, checkpoint, resumeCursor),
+      };
+    } catch (error) {
+      this.logControllerError("Could not read how to recover an interrupted run; it is marked cancelled without recovery.", error, { runId: run.id });
+      return { canRecoverInterruptedSession: false, recoveryKind: null };
     }
   }
 
@@ -238,6 +282,8 @@ export class RunRecoveryService extends AppService<
 
     const model = this.db.getModel(run.modelId);
     const provider = this.db.getProviderAccount(model.providerAccountId);
+    // Before the run is marked preparing: a refusal from the worker host would leave it preparing without a worker.
+    requireKnownProvider(provider);
     this.services.providerRuntime.requireProjectMcpSupported(run.projectId, provider);
     using _providerCliStart = this.services.providerRuntime.reserveProviderCliStart(provider.providerType);
     const apiKey = await this.secrets.readSecret(provider.apiKeyRef);

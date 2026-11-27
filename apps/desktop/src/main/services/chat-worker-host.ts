@@ -22,6 +22,7 @@ import { getCompileCacheWorkerData } from "../compile-cache";
 import { stepsBeforeLatestTurn } from "../provider-context-handoff";
 import { advanceUsageTracker, type UsageReportTracker } from "../token-usage-accounting";
 import { AppService } from "./app-service";
+import { requireKnownProvider } from "./provider-model-support";
 import { parseMetadataRecord, runChunkEventType } from "./run-step-content";
 import { type ChatWorkerChunkPayload, type ChatWorkerPayload, resetUsageBaselineForFreshSession } from "./worker-payloads";
 
@@ -172,6 +173,7 @@ export class ChatWorkerHost extends AppService<
     nativeCommand?: boolean,
   ): Promise<Worker> {
     this.services.activeWorkers.requireAgentWorkersAvailable();
+    requireKnownProvider(provider);
     const parentRun = chat.runId ? this.db.getRun(chat.runId) : undefined;
     if (parentRun) this.services.skills.skillService.inheritSelection("chat", chat.id, parentRun.id);
     const skills = {
