@@ -26,7 +26,7 @@ Desktop, iOS and other apps that need their own screen are better developed with
 3. Connect. Choose one:
 
    - **Tailscale:** install it, allow your user to manage it with `sudo tailscale set --operator=$USER`, then `buildwarden remote expose private` (tailnet only) or `buildwarden remote expose internet` (public, through Funnel).
-   - **SSH tunnel:** `ssh -L 47831:127.0.0.1:47831 user@server`. Use the same port on both ends; the host rejects other host names and ports.
+   - **SSH tunnel:** `ssh -L 47831:127.0.0.1:47831 user@server`. When 47831 was taken the host uses another port; `buildwarden remote` shows it as the local address. Use that port on both ends; the host rejects other host names and ports.
 
 4. Pair a browser: `buildwarden pair` prints a one-time code, a link, and a QR code when the host has an HTTPS address. Codes expire after five minutes.
 5. Add a provider, models and projects, in the browser or in the terminal:
