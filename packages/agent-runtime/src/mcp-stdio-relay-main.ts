@@ -53,6 +53,7 @@ const relayEventStream = async (response: Response, write: Write): Promise<void>
       if (value) buffer += decoder.decode(value, { stream: true });
       let boundary = buffer.search(/\r?\n\r?\n/);
       while (boundary >= 0) {
+        if (boundary > MAX_MESSAGE_CHARS) throw new Error("The MCP server sent an event larger than the relay accepts.");
         flush(buffer.slice(0, boundary));
         buffer = buffer.slice(boundary).replace(/^\r?\n\r?\n/, "");
         boundary = buffer.search(/\r?\n\r?\n/);
@@ -61,6 +62,24 @@ const relayEventStream = async (response: Response, write: Write): Promise<void>
       if (done) break;
     }
     if (buffer.trim()) flush(buffer);
+  } finally {
+    void reader.cancel().catch(() => undefined);
+  }
+};
+
+/** A JSON body, read only up to the relay's limit: a larger one is cancelled, not buffered. */
+const readBoundedText = async (response: Response): Promise<string> => {
+  const reader = response.body?.getReader();
+  if (!reader) return "";
+  const decoder = new TextDecoder();
+  let text = "";
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (value) text += decoder.decode(value, { stream: true });
+      if (text.length > MAX_MESSAGE_CHARS) throw new Error("The MCP server sent a response larger than the relay accepts.");
+      if (done) return text + decoder.decode();
+    }
   } finally {
     void reader.cancel().catch(() => undefined);
   }
@@ -123,9 +142,8 @@ export const runMcpStdioRelay = async (options: McpStdioRelayOptions): Promise<v
         await relayEventStream(response, deliver(message));
         return;
       }
-      const text = await response.text();
+      const text = await readBoundedText(response);
       if (!text.trim()) return;
-      if (text.length > MAX_MESSAGE_CHARS) throw new Error("The MCP server sent a response larger than the relay accepts.");
       const body = JSON.parse(text) as unknown;
       for (const entry of Array.isArray(body) ? body : [body]) deliver(message)(entry);
     } catch (error) {

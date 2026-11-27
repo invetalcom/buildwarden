@@ -129,6 +129,23 @@ describe("MCP stdio relay against an HTTP endpoint", () => {
       ["POST", undefined], ["POST", "2025-06-18"], ["DELETE", "2025-06-18"],
     ]);
   });
+
+  it("stops reading a JSON body at its limit instead of buffering all of it", async () => {
+    let pulled = 0;
+    let cancelled = false;
+    const endless = () => new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulled += 1;
+        controller.enqueue(new TextEncoder().encode("x".repeat(1_048_576)));
+      },
+      cancel() { cancelled = true; },
+    });
+    const { fetcher } = fakeEndpoint(() => new Response(endless(), { headers: { "content-type": "application/json" } }));
+    const written = await relayLines(fetcher, [{ jsonrpc: "2.0", id: 1, method: "tools/list" }]);
+    expect(written).toEqual([{ jsonrpc: "2.0", id: 1, error: { code: -32603, message: "The MCP server sent a response larger than the relay accepts." } }]);
+    expect(cancelled).toBe(true);
+    expect(pulled).toBeLessThan(20);
+  });
 });
 
 /** An ACP agent without HTTP MCP: it starts each stdio server it is given and lists and calls its tools. */
