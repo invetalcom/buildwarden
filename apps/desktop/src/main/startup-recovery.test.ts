@@ -70,6 +70,25 @@ describe("startup recovery", () => {
     expect(db.getRunSteps(run.id).at(-1)?.title).toBe("Session interrupted");
   });
 
+  it("keeps a chat active for the next start when its open questions cannot be closed", async () => {
+    const { controller, addRun, db } = await fixture();
+    const { provider, model } = addRun("codex-cli", "Codex");
+    const stuck = db.createChat(provider.id, model.id, "Stuck");
+    const other = db.createChat(provider.id, model.id, "Other");
+    const close = db.closeChatUserInputRequests.bind(db);
+    vi.spyOn(db, "closeChatUserInputRequests").mockImplementation((chatId) => {
+      if (chatId === stuck.id) throw new Error("database is locked");
+      close(chatId);
+    });
+
+    await controller.reconcileOrphanedActiveSessions();
+
+    expect(db.getChat(stuck.id).status).toBe("queued");
+    expect(db.getChatSteps(stuck.id).some((step) => step.title === "Session interrupted")).toBe(false);
+    expect(db.getChat(other.id).status).toBe("cancelled");
+    expect(db.getChatSteps(other.id).at(-1)?.title).toBe("Session interrupted");
+  });
+
   it("gives an unknown provider type the plain API capabilities", () => {
     const capabilities = getHarnessCapabilities("retired-provider" as ProviderType);
     expect(capabilities).toMatchObject({ nativeSessionResume: false, liveSteering: false, taskExecutionOptions: [] });

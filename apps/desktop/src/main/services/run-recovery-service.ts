@@ -48,10 +48,17 @@ export class RunRecoveryService extends AppService<
 
     const staleChats = this.db.listChatsWithStatuses(activeStatuses).filter((chat) => !this.services.activeWorkers.chatWorkers.has(chat.id));
     for (const chat of staleChats) {
-      this.db.updateChatStatus(chat.id, "cancelled", { finishedAt: new Date().toISOString() });
       const ids = { chatId: chat.id };
-      await this.attemptRecoveryStep("Could not close an interrupted chat's open questions.", ids, () =>
-        this.db.closeChatUserInputRequests(chat.id));
+      // Together, so a chat whose open questions cannot be closed stays active and the next start tries again.
+      try {
+        this.db.transaction(() => {
+          this.db.closeChatUserInputRequests(chat.id);
+          this.db.updateChatStatus(chat.id, "cancelled", { finishedAt: new Date().toISOString() });
+        });
+      } catch (error) {
+        this.logControllerError("Could not cancel an interrupted chat; the next start tries again.", error, ids);
+        continue;
+      }
       await this.attemptRecoveryStep("Marked an interrupted chat cancelled but could not record why.", ids, () =>
         this.services.runEvents.appendChatEvent(chat.id, "status", "Session interrupted", SESSION_INTERRUPTED_MESSAGE, {
           sessionInterrupted: true,
