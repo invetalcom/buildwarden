@@ -109,6 +109,14 @@ describe("delegating to a linked host", () => {
     expect((await tool("buildwarden_orchestration_get", {})).body).toMatchObject({ linkedHosts: [{ id: linked.id, label: "Build box" }] });
   });
 
+  it("keeps every host when several are saved at once", async () => {
+    const { controller, linked } = await setup();
+    await Promise.all(["A", "B", "C"].map((label) => controller.saveLinkedHost({ label, mcpUrl: `https://${label.toLowerCase()}.example.ts.net/mcp`, token: label })));
+    expect((await controller.listLinkedHosts()).map((host) => host.label).sort()).toEqual(["A", "B", "Build box", "C"]);
+    await Promise.all([controller.removeLinkedHost(linked.id), controller.saveLinkedHost({ label: "D", mcpUrl: "https://d.example.ts.net/mcp", token: "D" })]);
+    expect((await controller.listLinkedHosts()).map((host) => host.label).sort()).toEqual(["A", "B", "C", "D"]);
+  });
+
   it("keeps a host's token for a new name, but asks for a new one when its address changes", async () => {
     const { controller, linked } = await setup();
     await expect(controller.saveLinkedHost({ id: linked.id, label: "Renamed", mcpUrl: linked.mcpUrl })).resolves.toMatchObject({ label: "Renamed" });

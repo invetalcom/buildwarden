@@ -13,6 +13,15 @@ export class LinkedHostToolError extends Error {}
  * (`/mcp`) with an agent token the user created there, kept in the secret store.
  */
 export class LinkedHostService extends AppService {
+  /** Saves and removals run one at a time: each awaits the secret store between reading and writing the list. */
+  private mutations: Promise<unknown> = Promise.resolve();
+
+  private serialize<T>(change: () => Promise<T>): Promise<T> {
+    const next = this.mutations.then(change, change);
+    this.mutations = next.catch(() => undefined);
+    return next;
+  }
+
   listLinkedHosts(): LinkedHostRecord[] {
     return parseLinkedHostsSetting(this.db.getSettings()[APP_SETTING_KEYS.linkedHosts]);
   }
@@ -23,7 +32,11 @@ export class LinkedHostService extends AppService {
     return host;
   }
 
-  async saveLinkedHost(input: LinkedHostInput): Promise<LinkedHostRecord> {
+  saveLinkedHost(input: LinkedHostInput): Promise<LinkedHostRecord> {
+    return this.serialize(() => this.saveLinkedHostNow(input));
+  }
+
+  private async saveLinkedHostNow(input: LinkedHostInput): Promise<LinkedHostRecord> {
     const label = input.label.trim().slice(0, 80);
     if (!label) throw new Error("Name the linked host.");
     let url: URL;
@@ -46,14 +59,18 @@ export class LinkedHostService extends AppService {
     }
     const host: LinkedHostRecord = { id: existing?.id ?? randomUUID(), label, mcpUrl: url.toString() };
     if (token) await this.secrets.saveSecret(tokenSecretKey(host.id), token);
-    this.db.setSetting(APP_SETTING_KEYS.linkedHosts, JSON.stringify([...hosts.filter((entry) => entry.id !== host.id), host]));
+    // Read again after the await, so a change that finished meanwhile is not written over.
+    const current = this.listLinkedHosts();
+    this.db.setSetting(APP_SETTING_KEYS.linkedHosts, JSON.stringify([...current.filter((entry) => entry.id !== host.id), host]));
     return host;
   }
 
-  async removeLinkedHost(hostId: string): Promise<void> {
-    const hosts = this.listLinkedHosts();
-    this.db.setSetting(APP_SETTING_KEYS.linkedHosts, JSON.stringify(hosts.filter((entry) => entry.id !== hostId)));
-    await this.secrets.deleteSecret(tokenSecretKey(hostId));
+  removeLinkedHost(hostId: string): Promise<void> {
+    return this.serialize(async () => {
+      const hosts = this.listLinkedHosts();
+      this.db.setSetting(APP_SETTING_KEYS.linkedHosts, JSON.stringify(hosts.filter((entry) => entry.id !== hostId)));
+      await this.secrets.deleteSecret(tokenSecretKey(hostId));
+    });
   }
 
   /** Connects to the host and lists its projects, so the user sees the link works. */
