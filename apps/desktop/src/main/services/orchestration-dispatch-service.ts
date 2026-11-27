@@ -204,6 +204,15 @@ export class OrchestrationDispatchService extends AppService<
     return this.db.getRun(child.id);
   }
 
+  /**
+   * A delegated coordinator whose turn ended while its own tasks go on. It runs nothing, and its
+   * tasks need the capacity it would hold: counting it could stall the tree for good.
+   */
+  private waitsForItsOwnTasks(task: OrchestrationTaskRecord): boolean {
+    return Boolean(task.childRunId) && !this.services.activeWorkers.runWorkers.has(task.childRunId!)
+      && this.services.orchestration.isStillCoordinating(task.childRunId!);
+  }
+
   /** No await between counting and reserving: all coordinators share this admission point. */
   reserveOrchestrationTask(task: OrchestrationTaskRecord): boolean {
     const orchestration = this.db.getOrchestration(task.orchestrationId);
@@ -215,7 +224,7 @@ export class OrchestrationDispatchService extends AppService<
     if (!role || !model || this.services.orchestration.orchestrationBudgetExhaustion(orchestration)) return false;
     const active = this.db.listOrchestrationsWithStatuses(["active", "waiting", "attention", "paused"])
       .flatMap((entry) => this.db.listOrchestrationTasks(entry.id))
-      .filter((entry) => ORCHESTRATION_ACTIVE_TASK_STATUSES.has(entry.status) && !entry.remote);
+      .filter((entry) => ORCHESTRATION_ACTIVE_TASK_STATUSES.has(entry.status) && !entry.remote && !this.waitsForItsOwnTasks(entry));
     if (active.length >= orchestration.teamSnapshot.maxConcurrentTasks
       || active.filter((entry) => entry.roleId === task.roleId).length >= role.maxConcurrent
       || active.filter((entry) => entry.modelId === task.modelId).length >= model.maxConcurrent) return false;

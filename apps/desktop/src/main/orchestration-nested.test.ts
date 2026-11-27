@@ -16,14 +16,14 @@ afterEach(async () => {
   for (const dir of dirs.splice(0)) await rm(dir, { recursive: true, force: true });
 });
 
-const fixture = async (maxDelegationDepth?: number) => {
+const fixture = async (maxDelegationDepth?: number, maxConcurrentTasks = 3) => {
   const dir = await mkdtemp(join(tmpdir(), "bw-nested-"));
   dirs.push(dir);
   const db = new BuildWardenDatabase(join(dir, "state.sqlite"));
   databases.push(db);
   await db.init();
   db.setSetting(APP_SETTING_KEYS.sessionTitlesEnabled, "false");
-  if (maxDelegationDepth) db.setSetting(APP_SETTING_KEYS.orchestrationTeam, JSON.stringify({ version: 1, maxConcurrentTasks: 3, maxTasksPerOrchestration: 12, maxDelegationDepth, models: [], roles: [] }));
+  if (maxDelegationDepth) db.setSetting(APP_SETTING_KEYS.orchestrationTeam, JSON.stringify({ version: 1, maxConcurrentTasks, maxTasksPerOrchestration: 12, maxDelegationDepth, models: [], roles: [] }));
   const project = db.addProject({ repoPath: dir, baseBranch: "main", resolvedName: "Project", kind: "folder" });
   const provider = db.addProviderAccount({ providerType: "codex-cli", label: "Codex", apiBaseUrl: null, apiKeyRef: "key", configJson: "{}" });
   const model = db.addModel({ providerAccountId: provider.id, modelId: "gpt", displayName: "GPT", config: {}, capabilities: {}, enabled: true });
@@ -100,6 +100,27 @@ describe("nested delegation", () => {
     expect(orchestration.isStillCoordinating(child.id)).toBe(false);
     await expect(results.settleOrchestrationChildTerminal(db.getOrchestrationTask(task.id), final, { deliverQueued: false })).resolves.toBe("settled");
     expect(db.getOrchestrationTask(task.id)).toMatchObject({ status: "completed", summary: "Done, including the sub-task." });
+  });
+
+  it("lets a waiting coordinator's own task start when it holds the only slot", async () => {
+    const { db, controller, orchestration, root, addChild } = await fixture(2, 1);
+    const top = orchestration.getOrCreateOrchestration(root);
+    const { child } = addChild(top, root, "c1");
+    const nested = orchestration.getOrCreateOrchestration(child);
+    // The child's turn ended after it delegated; its own task waits for capacity.
+    const wave = db.createOrchestrationWave(nested.id);
+    const subtask = db.createOrchestrationTask({
+      orchestrationId: nested.id, waveId: wave.id, clientTaskId: "g1", title: "g1", prompt: "Part", roleId: "general", modelId: child.modelId, intent: "inspect",
+    });
+    expect(serviceOf(controller, "orchestrationDispatch").reserveOrchestrationTask(subtask)).toBe(true);
+    // A coordinator whose turn is still running keeps its slot.
+    db.updateOrchestrationTask(subtask.id, { status: "pending" });
+    serviceOf(controller, "activeWorkers").runWorkers.set(child.id, {} as never);
+    try {
+      expect(serviceOf(controller, "orchestrationDispatch").reserveOrchestrationTask(db.getOrchestrationTask(subtask.id))).toBe(false);
+    } finally {
+      serviceOf(controller, "activeWorkers").runWorkers.delete(child.id);
+    }
   });
 
   it("cancels the tasks a cancelled child delegated, and deletes the whole tree with the top-level run", async () => {
