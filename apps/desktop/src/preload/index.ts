@@ -2,8 +2,10 @@ import { contextBridge, ipcRenderer } from "electron";
 import {
   IPC_CHANNELS,
   type AcpAgentSessionImportInput,
+  type AnswerAutomationQuestionInput,
   type AppWarning,
   type AutomationStartedNotificationPayload,
+  type AutomationWorkflowChangedPayload,
   type AppMenuCommand,
   type AppMenuSection,
   type ChatInput,
@@ -86,6 +88,14 @@ const api: DesktopApi = {
   updateProjectAutomation: (automationId: string, input) => invoke(IPC_CHANNELS.updateProjectAutomation, automationId, input),
   deleteProjectAutomation: (automationId: string) => invoke(IPC_CHANNELS.deleteProjectAutomation, automationId),
   runProjectAutomationNow: (automationId: string) => invoke(IPC_CHANNELS.runProjectAutomationNow, automationId),
+  answerAutomationQuestion: (input: AnswerAutomationQuestionInput) => invoke(IPC_CHANNELS.answerAutomationQuestion, input),
+  retryAutomationWorkflowRun: (workflowRunId: string) => invoke(IPC_CHANNELS.retryAutomationWorkflowRun, workflowRunId),
+  cancelAutomationWorkflowRun: (workflowRunId: string) => invoke(IPC_CHANNELS.cancelAutomationWorkflowRun, workflowRunId),
+  onAutomationWorkflowChanged: (listener: (payload: AutomationWorkflowChangedPayload) => void) => {
+    const wrapped = (_event: Electron.IpcRendererEvent, payload: AutomationWorkflowChangedPayload) => listener(payload);
+    ipcRenderer.on(IPC_CHANNELS.automationWorkflowChanged, wrapped);
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.automationWorkflowChanged, wrapped);
+  },
   getStartupAutomationCatchUp: () => invoke(IPC_CHANNELS.getStartupAutomationCatchUp),
   resolveStartupAutomationCatchUp: (automationIds: string[]) => invoke(IPC_CHANNELS.resolveStartupAutomationCatchUp, automationIds),
   onAutomationStarted: (listener: (payload: AutomationStartedNotificationPayload) => void) => {

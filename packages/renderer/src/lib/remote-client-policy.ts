@@ -91,6 +91,7 @@ export const REMOTE_MUTATION_METHODS = new Set<RemoteApiMethod>([
   "createRunChat", "respondToChatUserInput", "followUpChat", "queueChatFollowUp", "updateChatFollowUpQueue", "cancelChat", "deleteChat",
   "addChatBookmark", "removeChatBookmark", "removeChatBookmarkById", "createProjectTask", "updateProjectTask", "deleteProjectTask", "generateProjectTaskRunPrompt",
   "createProjectAutomation", "updateProjectAutomation", "deleteProjectAutomation", "runProjectAutomationNow",
+  "answerAutomationQuestion", "retryAutomationWorkflowRun", "cancelAutomationWorkflowRun",
   "generateProjectInsight", "runProjectLab", "deleteProjectLabThread", "createProjectLoop", "cancelProjectLoop",
   "resumeProjectLoop", "deleteProjectLoop", "respondToProjectLoopUiReview", "fetchProjectPrMrDiff",
   "analyzeProjectPrMrDiff", "postProjectPrMrReview", "submitProjectPrMrComments", "replyProjectPrMrReviewThread",
@@ -121,7 +122,7 @@ export const REMOTE_MUTATION_SCOPES = new Map<RemoteApiMethod, readonly RemoteAc
     "cancelOrchestration", "finishOrchestration", "sendOrchestrationTaskMessage", "retryOrchestrationTask",
     "startCouncil", "cancelCouncil", "applyCouncilFindings", "manageRunOwnedProcesses", "listAcpAgentSessions", "importAcpAgentSession",
   ].map((method) => [method as RemoteApiMethod, ["run:operate"] as const] as const),
-  ...["respondToShellApproval", "respondToRunUserInput"]
+  ...["respondToShellApproval", "respondToRunUserInput", "answerAutomationQuestion"]
     .map((method) => [method as RemoteApiMethod, ["approval:respond"] as const] as const),
   ...["renameChatTitle", "regenerateChatTitle", "createChat", "createRunChat", "respondToChatUserInput", "followUpChat", "queueChatFollowUp", "updateChatFollowUpQueue", "cancelChat", "deleteChat",
     "addChatBookmark", "removeChatBookmark", "removeChatBookmarkById", "manageChatOwnedProcesses"]
@@ -141,7 +142,8 @@ export const REMOTE_MUTATION_SCOPES = new Map<RemoteApiMethod, readonly RemoteAc
     "deleteModel", "setAppSetting", "setProjectRevisionVerificationPolicy", "saveNetworkProxySettings", "saveProjectForgeAuthToken",
     "deleteProjectForgeAuthToken", "saveProjectForgePrMonitorSettings", "createProjectTask", "updateProjectTask",
     "deleteProjectTask", "generateProjectTaskRunPrompt", "createProjectAutomation", "updateProjectAutomation",
-    "deleteProjectAutomation", "runProjectAutomationNow", "generateProjectInsight", "runProjectLab",
+    "deleteProjectAutomation", "runProjectAutomationNow", "retryAutomationWorkflowRun", "cancelAutomationWorkflowRun",
+    "generateProjectInsight", "runProjectLab",
     "deleteProjectLabThread", "createProjectLoop", "cancelProjectLoop", "resumeProjectLoop", "deleteProjectLoop",
     "respondToProjectLoopUiReview", "checkProviderCliUpdates", "runProviderCliUpdate", "useSubscriptionReset",
     "importSkill", "removeImportedSkill", "setSessionSkills",

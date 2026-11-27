@@ -82,6 +82,7 @@ const REMOTE_STREAM_EVENTS = [
   "warning",
   "loop",
   "task",
+  "automation",
   "orchestration",
   "terminal-data",
   "terminal-exit",
@@ -1043,6 +1044,10 @@ const isRemoteEventPayload = (event: RemoteStreamEventType, payload: unknown): b
   }
   if (event === "loop") {
     return isPlainObject(payload) && typeof payload.loopId === "string" && typeof payload.projectId === "string";
+  }
+  if (event === "automation") {
+    return isPlainObject(payload) && typeof payload.workflowRunId === "string" && typeof payload.automationId === "string" &&
+      typeof payload.projectId === "string";
   }
   if (event === "terminal-data") {
     return isPlainObject(payload) && typeof payload.sessionId === "string" && typeof payload.data === "string";

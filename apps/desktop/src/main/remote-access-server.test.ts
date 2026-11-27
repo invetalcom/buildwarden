@@ -272,6 +272,9 @@ describe("remote operation registry", () => {
       | "updateProjectAutomation"
       | "deleteProjectAutomation"
       | "runProjectAutomationNow"
+      | "answerAutomationQuestion"
+      | "retryAutomationWorkflowRun"
+      | "cancelAutomationWorkflowRun"
       | "generateProjectInsight"
       | "runProjectLab"
       | "deleteProjectLabThread"
@@ -918,6 +921,7 @@ describe("remote access authentication", () => {
         "events:warning",
         "events:loop",
         "events:task",
+        "events:automation",
         "events:terminal",
         "events:browser",
         "events:forge",

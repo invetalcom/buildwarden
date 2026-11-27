@@ -97,6 +97,11 @@ export class AttachmentBlobStore {
     }
   }
 
+  /** True when the file is stored, without reading it. */
+  has(blobId: string): boolean {
+    return isAttachmentBlobId(blobId) && existsSync(this.pathFor(blobId));
+  }
+
   /** Reads at most `maxBytes` from the start of a stored file. */
   readPrefix(blobId: string, maxBytes: number): Buffer | null {
     if (!isAttachmentBlobId(blobId)) return null;

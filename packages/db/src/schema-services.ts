@@ -104,6 +104,7 @@ export const SERVICES_SCHEMA_SQL = `      create table if not exists provider_se
       );
       create index if not exists idx_run_council_rounds_run on run_council_rounds(run_id, created_at);
       create index if not exists idx_run_council_rounds_status on run_council_rounds(status);
+      create index if not exists idx_run_council_rounds_project on run_council_rounds(project_id);
 
       create table if not exists orchestrations (
         id text primary key,

@@ -48,6 +48,7 @@ import { BetaBadge } from "./BetaBadge";
 import { ImageLightbox } from "../ui/image-lightbox";
 import { Input } from "../ui/input";
 import { Select } from "../ui/select";
+import { Switch } from "../ui/switch";
 import { Textarea } from "../ui/textarea";
 import { cn } from "../../lib/cn";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
@@ -645,6 +646,9 @@ const LoopDetailHeader = ({ loop, busy, actionPending, error, mergedCount, itera
         <span>{MERGE_POLICY_OPTIONS.find((option) => option.value === loop.mergePolicy)?.label}</span>
         <span>UI: {UI_POLICY_OPTIONS.find((option) => option.value === loop.uiChangePolicy)?.label}</span>
         <span>Review: {PR_REVIEW_POLICY_OPTIONS.find((option) => option.value === loop.prReviewPolicy)?.label ?? "No automatic review"}</span>
+        {loop.councilBeforePr || loop.verifyBeforePr ? (
+          <span>Before each PR: {[loop.councilBeforePr ? "council review" : "", loop.verifyBeforePr ? "verification" : ""].filter(Boolean).join(", ")}</span>
+        ) : null}
         <span>{mergedCount}/{iterationCount || "?"} PRs merged</span>
         <span>{new Date(loop.createdAt).toLocaleString()}</span>
       </div>
@@ -906,6 +910,8 @@ export const ProjectLoopsTab = ({
   const [uiChangePolicy, setUiChangePolicy] = useState<ProjectLoopUiChangePolicy>("manual-approval");
   const [prReviewPolicy, setPrReviewPolicy] = useState<ProjectLoopPrReviewPolicy>("none");
   const [uiReviewInstructions, setUiReviewInstructions] = useState("");
+  const [councilBeforePr, setCouncilBeforePr] = useState(false);
+  const [verifyBeforePr, setVerifyBeforePr] = useState(false);
   const [baseBranch, setBaseBranch] = useState(project.project.baseBranch);
   const [createError, setCreateError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -973,6 +979,8 @@ export const ProjectLoopsTab = ({
         uiChangePolicy,
         prReviewPolicy,
         uiReviewInstructions: uiReviewInstructions.trim() || null,
+        councilBeforePr,
+        verifyBeforePr,
         baseBranch: baseBranch || project.project.baseBranch,
       });
       setName("");
@@ -1125,6 +1133,16 @@ export const ProjectLoopsTab = ({
                   }))}
                 />
               </label>
+              <div className="grid gap-2 sm:grid-cols-2 lg:col-span-2">
+                <label className="flex items-center justify-between gap-2 rounded-md bg-[var(--ec-panel)] p-2 text-xs text-[var(--ec-text)]">
+                  <span><span className="block font-medium">Council review before each PR</span><span className="text-[10px] text-[var(--ec-muted)]">Reviewers check the changes; recommended findings are fixed first.</span></span>
+                  <Switch checked={councilBeforePr} onCheckedChange={setCouncilBeforePr} />
+                </label>
+                <label className="flex items-center justify-between gap-2 rounded-md bg-[var(--ec-panel)] p-2 text-xs text-[var(--ec-text)]">
+                  <span><span className="block font-medium">Verification before each PR</span><span className="text-[10px] text-[var(--ec-muted)]">Runs the project's verification commands; the agent fixes failures up to twice.</span></span>
+                  <Switch checked={verifyBeforePr} onCheckedChange={setVerifyBeforePr} />
+                </label>
+              </div>
               {uiChangePolicy !== "auto" ? (
                 <label className="space-y-1.5 lg:col-span-2">
                   <span className="text-xs text-[var(--ec-muted)]">Screenshot notes for the agent (optional)</span>

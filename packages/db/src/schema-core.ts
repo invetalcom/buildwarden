@@ -329,11 +329,26 @@ export const CORE_SCHEMA_SQL = `
         last_scheduled_at text,
         next_run_at text not null,
         last_error text,
+        trigger_json text not null default '{"kind":"schedule"}',
+        workflow_json text not null default '',
+        trigger_state_json text,
         created_at text not null,
         updated_at text not null,
         foreign key(project_id) references projects(id),
         foreign key(model_id) references models(id)
       );
+
+      create table if not exists automation_workflow_runs (
+        id text primary key,
+        automation_id text not null,
+        project_id text not null,
+        status text not null,
+        created_at text not null,
+        updated_at text not null,
+        record_json text not null
+      );
+      create index if not exists idx_automation_workflow_runs_automation on automation_workflow_runs(automation_id, created_at);
+      create index if not exists idx_automation_workflow_runs_status on automation_workflow_runs(status);
 
       create table if not exists project_insights (
         id text primary key,
@@ -394,6 +409,8 @@ export const CORE_SCHEMA_SQL = `
         ui_change_policy text not null default 'auto',
         pr_review_policy text not null default 'none',
         ui_review_instructions text,
+        council_before_pr integer not null default 0,
+        verify_before_pr integer not null default 0,
         base_branch text not null,
         status text not null,
         plan_summary text,
@@ -481,6 +498,7 @@ export const CORE_SCHEMA_SQL = `
       create index if not exists idx_project_automations_due on project_automations(enabled, next_run_at);
       create index if not exists idx_project_automations_model on project_automations(model_id);
       create index if not exists idx_worktrees_run_id on worktrees(run_id);
+      create index if not exists idx_worktrees_project on worktrees(project_id);
       create index if not exists idx_bookmarks_original_run_id on bookmarks(original_run_id);
       create index if not exists idx_chat_bookmarks_original_chat_id on chat_bookmarks(original_chat_id);
 

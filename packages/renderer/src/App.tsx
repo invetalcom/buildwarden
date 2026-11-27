@@ -1,4 +1,5 @@
 import { useLatestRef } from "./lib/use-latest-ref";
+import { createResponseOrderGate } from "./lib/response-order-gate";
 import { recordForgeEvent, replayForgeEventsSince, type RecordedForgeEvents } from "./lib/forge-event-replay";
 import { startRunBatch, type RunBatchProgress, type RunComposerSubmission } from "./lib/run-batch";
 import { ForgeIssueLinksProvider, type ForgeIssueLinksContextValue, type ForgeIssueLinkTarget } from "./lib/forge-issue-links-context";
@@ -539,6 +540,7 @@ export const App = () => {
         : undefined;
     return getModelPresetsByGroupForProvider(selectedProviderAccount.providerType, family);
   }, [selectedProviderAccount]);
+  const [snapshotResponseOrder] = useState(createResponseOrderGate);
   const loadSnapshot = useCallback(async () => {
     if (!buildwarden) {
       setError("The Electron desktop bridge is unavailable. Restart the app with `pnpm dev`.");
@@ -546,8 +548,11 @@ export const App = () => {
       return;
     }
 
+    const request = snapshotResponseOrder.start();
     const next = await buildwarden.refreshSnapshot();
     if (latestClient.current !== buildwarden) return;
+    // A remote host can answer overlapping reloads out of order; a later request's answer is newer.
+    if (!snapshotResponseOrder.accept(request)) return;
     const localModels = next.models.filter((entry) => belongsToActiveInstance(entry.id));
     const localProviders = next.providerAccounts.filter((entry) => belongsToActiveInstance(entry.id));
     // Keep unchanged projects, runs and lists, so a refresh re-renders only what changed.
@@ -583,7 +588,7 @@ export const App = () => {
       }
       return next.selectedRunId || next.projects[0]?.recentRuns[0]?.id || null;
     });
-  }, [buildwarden, belongsToActiveInstance, latestClient]);
+  }, [buildwarden, belongsToActiveInstance, latestClient, snapshotResponseOrder]);
 
   const checkStartupDataRetention = useCallback(async () => {
     if (buildwarden.capabilities.platform !== "electron" || snapshot.settings[APP_SETTING_KEYS.dataRetentionCleanupEnabled] !== "true") {
@@ -647,6 +652,8 @@ export const App = () => {
    */
   const snapshotRefreshTimerRef = useRef<number | null>(null);
   const snapshotRefreshDueAtRef = useRef(0);
+  // A refresh scheduled before a client switch still fires afterwards and must reload from the new client.
+  const loadSnapshotRef = useLatestRef(loadSnapshot);
   const scheduleSnapshotRefresh = useCallback((delayMs = SNAPSHOT_REFRESH_DELAY_MS) => {
     const dueAt = Date.now() + delayMs;
     if (snapshotRefreshTimerRef.current !== null) {
@@ -658,11 +665,11 @@ export const App = () => {
     snapshotRefreshDueAtRef.current = dueAt;
     snapshotRefreshTimerRef.current = window.setTimeout(() => {
       snapshotRefreshTimerRef.current = null;
-      loadSnapshot().catch((caught: unknown) => {
+      loadSnapshotRef.current().catch((caught: unknown) => {
         setError(caught instanceof Error ? caught.message : "Unexpected error");
       });
     }, delayMs);
-  }, [loadSnapshot]);
+  }, [loadSnapshotRef]);
 
   const {
     detail: chatDetail,
@@ -1420,6 +1427,9 @@ export const App = () => {
     const unsubscribeLoopChanged = buildwarden.onProjectLoopChanged(() => {
       scheduleSnapshotRefresh();
     });
+    const unsubscribeAutomationWorkflowChanged = buildwarden.onAutomationWorkflowChanged(() => {
+      scheduleSnapshotRefresh();
+    });
     const unsubscribeOrchestrationChanged = buildwarden.onOrchestrationChanged((payload) => {
       scheduleSnapshotRefresh();
       if (payload.deletedRunIds?.length) {
@@ -1449,6 +1459,7 @@ export const App = () => {
       unsubscribeWarning();
       unsubscribeAutomationStarted();
       unsubscribeLoopChanged();
+      unsubscribeAutomationWorkflowChanged();
       unsubscribeOrchestrationChanged();
       unsubscribeForgeChanged();
     };
@@ -4386,10 +4397,9 @@ export const App = () => {
   useEffect(() => {
     // Older remote hosts reject subscriptions containing unknown event types.
     if (!runOrganizationAvailable) return;
-    return buildwarden.onRunOrganizationChanged?.(() => {
-      void loadSnapshot().catch((caught: unknown) => setError(caught instanceof Error ? caught.message : "Could not refresh run sections."));
-    });
-  }, [buildwarden, loadSnapshot, runOrganizationAvailable]);
+    // Every Project Lab change sends this too, so a burst of them reloads the snapshot once.
+    return buildwarden.onRunOrganizationChanged?.(() => scheduleSnapshotRefresh());
+  }, [buildwarden, runOrganizationAvailable, scheduleSnapshotRefresh]);
   const sidebarOnRunOrganizationChange = useStableCallback((organization: NonNullable<AppSnapshot["runOrganization"]>) => {
     setSnapshot((current) => ({ ...current, runOrganization: organization }));
   });

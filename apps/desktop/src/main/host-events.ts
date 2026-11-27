@@ -2,6 +2,7 @@ import type {
   AppMenuCommand,
   AppWarning,
   AutomationStartedNotificationPayload,
+  AutomationWorkflowChangedPayload,
   ChatEvent,
   OrchestrationChangedPayload,
   OwnedProcessesSnapshot,
@@ -20,6 +21,7 @@ export interface HostEventMap {
   chat: ChatEvent;
   warning: AppWarning;
   automationStarted: AutomationStartedNotificationPayload;
+  automation: AutomationWorkflowChangedPayload;
   loop: ProjectLoopChangedPayload;
   task: ProjectTaskChangedPayload;
   orchestration: OrchestrationChangedPayload;

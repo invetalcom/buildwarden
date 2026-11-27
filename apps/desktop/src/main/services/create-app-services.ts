@@ -18,6 +18,9 @@ import { UsageService } from "./usage-service";
 import { ModelTextService } from "./model-text-service";
 import { TitleService } from "./title-service";
 import { AutomationService } from "./automation-service";
+import { AutomationStepService } from "./automation-step-service";
+import { AutomationTriggerService } from "./automation-trigger-service";
+import { AutomationWorkflowService } from "./automation-workflow-service";
 import { ProjectTaskService } from "./project-task-service";
 import { OrganizationService } from "./organization-service";
 import { VerificationService } from "./verification-service";
@@ -79,6 +82,9 @@ export const createAppServices = (context: AppServiceContext): AppServices => {
     modelText: new ModelTextService(context, services),
     titles: new TitleService(context, services),
     automations: new AutomationService(context, services),
+    automationSteps: new AutomationStepService(context, services),
+    automationTriggers: new AutomationTriggerService(context, services),
+    automationWorkflows: new AutomationWorkflowService(context, services),
     tasks: new ProjectTaskService(context, services),
     organization: new OrganizationService(context, services),
     verification: new VerificationService(context, services),
@@ -127,6 +133,9 @@ export const createAppServices = (context: AppServiceContext): AppServices => {
     ["orchestrationCoordinator", services.orchestrationCoordinator],
     ["council", services.council],
     ["prWatch", services.prWatch],
+    // After the council, so a review it starts on its own is seen before the next step begins.
+    ["automationWorkflows", services.automationWorkflows],
+    ["automationTriggers", services.automationTriggers],
   ]);
   return services;
 };

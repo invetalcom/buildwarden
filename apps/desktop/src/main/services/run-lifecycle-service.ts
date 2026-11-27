@@ -82,7 +82,8 @@ export class RunLifecycleService extends AppService<
     const normalizedInput = input.kind === "automation"
       ? {
           ...input,
-          yoloMode: true,
+          // Nobody watches an automation run, except when its prompt carries text other people wrote.
+          yoloMode: input.untrustedInput !== true,
           workspaceType: this.db.getProject(input.projectId).kind === "git" ? "worktree" as const : "copy" as const,
         }
       : input;

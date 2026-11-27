@@ -16,11 +16,13 @@ import type { RunEnded, RunEndedListener } from "./run-ended-notifier";
 
 /** Starts and controls project loops. */
 export class ProjectLoopService extends AppService<
+  | "council"
   | "forgeRequests"
   | "modelText"
   | "runDeletion"
   | "runLifecycle"
   | "runTurns"
+  | "verification"
   | "workspaceGuard"
 > implements RunEndedListener {
   private loopRunnerInstance: ProjectLoopRunner | null = null;
@@ -41,6 +43,16 @@ export class ProjectLoopService extends AppService<
           return this.services.modelText.askModelForText(cwd, context, input);
         },
         createForgeProvider: (projectId) => this.services.forgeRequests.createProjectPrReviewProvider(projectId),
+        getCouncilRounds: (runId) => this.services.council.getCouncilRounds(runId),
+        startCouncil: (runId) => this.services.council.startCouncil(runId),
+        stopCouncilForRun: (runId) => this.services.council.getCouncilService().stopForRun(runId),
+        getRunVerification: (runId) => this.services.verification.getRunVerification(runId),
+        applyCouncilFindings: (roundId, groupIds) => this.services.council.applyCouncilFindings(roundId, groupIds),
+        verifyRun: async (runId) => {
+          // Verifying without commands throws; the loop reports it and opens the PR anyway.
+          const current = await this.services.verification.getRunVerification(runId);
+          return current.status === "unconfigured" ? current : this.services.verification.verifyRunRevision(runId);
+        },
         emitLoopChanged: (payload) => this.events.publish("loop", payload),
         logError: (message, error, metadata) => this.logControllerError(message, error, metadata),
         logWarn: (message, metadata) => this.logControllerWarn(message, metadata),

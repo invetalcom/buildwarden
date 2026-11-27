@@ -89,6 +89,8 @@ const loopRecord = (id: string): ProjectLoopRecord => ({
   uiChangePolicy: "auto",
   prReviewPolicy: "none",
   uiReviewInstructions: null,
+  councilBeforePr: false,
+  verifyBeforePr: false,
   baseBranch: "main",
   status: "completed",
   planSummary: null,

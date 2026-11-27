@@ -109,6 +109,8 @@ const automation = {
   lastScheduledAt: null,
   nextRunAt: "2026-08-20T09:00:00.000Z",
   lastError: null,
+  trigger: { kind: "schedule" },
+  workflow: { check: null, steps: [] },
   createdAt: "2026-08-19T09:00:00.000Z",
   updatedAt: "2026-08-19T09:00:00.000Z",
 } satisfies ProjectAutomationRecord;
@@ -133,6 +135,7 @@ const createHarness = (overrides: DbOverrides = {}) => {
     setSetting: calls.setSetting,
     deleteSetting: calls.deleteSetting,
     listRunTurnRestorePoints: vi.fn(() => []),
+    listAutomationWorkflowRuns: vi.fn(() => []),
     getPrWatch: vi.fn(() => null),
     listPrWatchesWithStatuses: vi.fn(() => []),
     getPendingRunRewind: vi.fn(() => null),
@@ -214,12 +217,12 @@ const tempDirs: string[] = [];
 describe("optional prompt restore capture", () => {
   it.each((["initial", "follow-up"] as const).flatMap((commandType) =>
     (["git", "folder"] as const).flatMap((workspaceVcs) =>
-      (["getRunSteps", "getRunPromptRestorePoint", "getProviderAccountSessionRuntime", "saveRunTurnRestorePoint"] as const)
+      (["getLatestUserCommandStep", "getRunPromptRestorePoint", "getProviderAccountSessionRuntime", "saveRunTurnRestorePoint"] as const)
         .map((failure) => ({ commandType, workspaceVcs, failure })))))("continues after $failure fails for $commandType in a $workspaceVcs workspace", async ({ commandType, workspaceVcs, failure }) => {
     const run = { id: "run-1", kind: "standard", providerAccountId: provider.id, worktreePath: project.repoPath, workspaceVcs } as RunRecord;
     const h = createHarness({
       getRun: () => run,
-      getRunSteps: vi.fn(() => [{ id: "prompt", content: "Task", metadataJson: JSON.stringify({ source: "user", commandType }) }]),
+      getLatestUserCommandStep: vi.fn(() => ({ id: "prompt", content: "Task", metadataJson: JSON.stringify({ source: "user", commandType }) })),
       getProviderAccountSessionRuntime: vi.fn(() => null),
       [failure]: vi.fn(() => { throw new Error("restore storage unavailable"); }),
     });
@@ -1468,6 +1471,22 @@ describe("AppController settings and lightweight workflows", () => {
       startedAt: run.startedAt,
     });
     expect(setProjectAutomationError).toHaveBeenCalledWith(automation.id, null);
+  });
+
+  it("keeps Run now from overlapping a previous run only where the editor offers that choice", async () => {
+    const active = { id: "active-run", projectId: project.id, automationId: automation.id, status: "running" } as RunRecord;
+    const scheduled = createHarness({ getProjectAutomation: vi.fn(() => automation), listRunsForProject: vi.fn(() => [active]) });
+    tempDirs.push(scheduled.logDir);
+    const scheduledStart = vi.spyOn(internalsOf<AppController>(scheduled.controller), "createRun");
+    await expect(scheduled.controller.runProjectAutomationNow(automation.id)).rejects.toThrow("The previous automation run is still active.");
+    expect(scheduledStart).not.toHaveBeenCalled();
+
+    const manualAutomation = { ...automation, trigger: { kind: "manual" as const } };
+    const manual = createHarness({ getProjectAutomation: vi.fn(() => manualAutomation), listRunsForProject: vi.fn(() => [active]), setProjectAutomationError: vi.fn() });
+    tempDirs.push(manual.logDir);
+    const run = { id: "manual-run", projectId: project.id, createdAt: "2026-08-19T09:00:00.000Z" } as RunRecord;
+    vi.spyOn(internalsOf<AppController>(manual.controller), "createRun").mockResolvedValue(run);
+    await expect(manual.controller.runProjectAutomationNow(automation.id)).resolves.toBe(run);
   });
 
   it("converts direct local automation run requests to an isolated worktree", async () => {

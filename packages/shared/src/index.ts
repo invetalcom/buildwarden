@@ -31,6 +31,14 @@ export * from "./model-execution-profiles";
 import { formatModelExecutionOptionLabel } from "./model-execution-profiles";
 export * from "./revision-verification";
 export * from "./automation-schedule";
+export * from "./automation-workflow";
+import type {
+  AnswerAutomationQuestionInput,
+  AutomationTrigger,
+  AutomationWorkflowChangedPayload,
+  AutomationWorkflowDefinition,
+  AutomationWorkflowRun,
+} from "./automation-workflow";
 export * from "./deep-links";
 export * from "./streamed-step-events";
 export * from "./step-content-preview";
@@ -980,6 +988,10 @@ export interface ProjectAutomationRecord {
   baseBranch: string | null;
   onlyIfPreviousFinished: boolean | number;
   enabled: boolean | number;
+  /** How the automation starts. Only `schedule` uses the cron or one-time fields. */
+  trigger: AutomationTrigger;
+  /** Steps after the prompt. Without any, a start is a single agent run as before. */
+  workflow: AutomationWorkflowDefinition;
   /** Most recent due occurrence that was consumed; for one-time automations, set once the occurrence fired or was skipped. */
   lastScheduledAt: string | null;
   /** Next due occurrence; for one-time automations, the single scheduled start (kept after it fired). */
@@ -997,6 +1009,8 @@ export interface ProjectAutomationListItem {
   automation: ProjectAutomationSummary;
   /** Hidden automation runs, newest first. */
   runs: RunListItem[];
+  /** Recent workflow runs, newest first. Empty for automations without steps. */
+  workflowRuns: AutomationWorkflowRun[];
 }
 
 export interface ProjectAutomationInput {
@@ -1018,6 +1032,10 @@ export interface ProjectAutomationInput {
   /** Repeating automations only; one-time automations always start at their scheduled time. */
   onlyIfPreviousFinished?: boolean;
   enabled?: boolean;
+  /** Defaults to the schedule; on update, omitted keeps the stored trigger. */
+  trigger?: AutomationTrigger;
+  /** On update, omitted keeps the stored steps. */
+  workflow?: AutomationWorkflowDefinition;
 }
 
 export type UpdateProjectAutomationInput = Partial<ProjectAutomationInput>;
@@ -1183,6 +1201,10 @@ export interface ProjectLoopRecord {
   prReviewPolicy: ProjectLoopPrReviewPolicy;
   /** Optional user-provided extra instructions appended to the screenshot-capture prompt. */
   uiReviewInstructions: string | null;
+  /** Each iteration gets a council review, and recommended findings are fixed, before its PR/MR opens. */
+  councilBeforePr: boolean | number;
+  /** Each iteration must pass the project's verification commands (with up to two fix turns) before its PR/MR opens. */
+  verifyBeforePr: boolean | number;
   baseBranch: string;
   status: ProjectLoopStatus;
   planSummary: string | null;
@@ -1267,6 +1289,8 @@ export interface CreateProjectLoopInput {
   uiChangePolicy: ProjectLoopUiChangePolicy;
   prReviewPolicy?: ProjectLoopPrReviewPolicy;
   uiReviewInstructions?: string | null;
+  councilBeforePr?: boolean;
+  verifyBeforePr?: boolean;
   baseBranch?: string;
 }
 
@@ -1901,6 +1925,8 @@ export interface RunInput {
   delegationEnabled?: boolean;
   /** Issue this run works on; recorded as a link so the issue lists the run. */
   forgeIssue?: ForgeIssueReference;
+  /** Automation runs only: the prompt holds text other people wrote, so shell approvals stay on. */
+  untrustedInput?: boolean;
 }
 
 export interface ContinueRunInput {
@@ -5632,6 +5658,10 @@ export interface DesktopApi {
   updateProjectAutomation(automationId: string, input: UpdateProjectAutomationInput): Promise<ProjectAutomationRecord>;
   deleteProjectAutomation(automationId: string): Promise<void>;
   runProjectAutomationNow(automationId: string): Promise<RunRecord>;
+  answerAutomationQuestion(input: AnswerAutomationQuestionInput): Promise<AutomationWorkflowRun>;
+  retryAutomationWorkflowRun(workflowRunId: string): Promise<AutomationWorkflowRun>;
+  cancelAutomationWorkflowRun(workflowRunId: string): Promise<AutomationWorkflowRun>;
+  onAutomationWorkflowChanged(listener: (payload: AutomationWorkflowChangedPayload) => void): () => void;
   getStartupAutomationCatchUp(): Promise<StartupAutomationCatchUpItem[]>;
   resolveStartupAutomationCatchUp(automationIds: string[]): Promise<RunRecord[]>;
   onAutomationStarted(listener: (payload: AutomationStartedNotificationPayload) => void): () => void;
@@ -6026,6 +6056,7 @@ export const REMOTE_ACCESS_SERVER_CAPABILITIES = [
   "events:warning",
   "events:loop",
   "events:task",
+  "events:automation",
   "events:terminal",
   "events:browser",
   "events:forge",
@@ -6040,6 +6071,8 @@ export type RemoteStreamEventType =
   | "warning"
   | "loop"
   | "task"
+  /** An automation workflow run changed. */
+  | "automation"
   | "orchestration"
   | "terminal-data"
   | "terminal-exit"
@@ -6057,6 +6090,7 @@ export interface RemoteStreamEventPayloadMap {
   warning: AppWarning;
   loop: ProjectLoopChangedPayload;
   task: ProjectTaskChangedPayload;
+  automation: AutomationWorkflowChangedPayload;
   orchestration: OrchestrationChangedPayload;
   "terminal-data": RunTerminalDataPayload;
   "terminal-exit": RunTerminalExitPayload;
@@ -6359,6 +6393,9 @@ export type RemoteOperationMap = {
   updateProjectAutomation: DesktopApi["updateProjectAutomation"];
   deleteProjectAutomation: DesktopApi["deleteProjectAutomation"];
   runProjectAutomationNow: DesktopApi["runProjectAutomationNow"];
+  answerAutomationQuestion: DesktopApi["answerAutomationQuestion"];
+  retryAutomationWorkflowRun: DesktopApi["retryAutomationWorkflowRun"];
+  cancelAutomationWorkflowRun: DesktopApi["cancelAutomationWorkflowRun"];
   generateProjectInsight: DesktopApi["generateProjectInsight"];
   runProjectLab: DesktopApi["runProjectLab"];
   deleteProjectLabThread: DesktopApi["deleteProjectLabThread"];
@@ -6596,6 +6633,10 @@ export const IPC_CHANNELS = {
   updateProjectAutomation: "buildwarden:update-project-automation",
   deleteProjectAutomation: "buildwarden:delete-project-automation",
   runProjectAutomationNow: "buildwarden:run-project-automation-now",
+  answerAutomationQuestion: "buildwarden:answer-automation-question",
+  retryAutomationWorkflowRun: "buildwarden:retry-automation-workflow-run",
+  cancelAutomationWorkflowRun: "buildwarden:cancel-automation-workflow-run",
+  automationWorkflowChanged: "buildwarden:automation-workflow-changed",
   getStartupAutomationCatchUp: "buildwarden:get-startup-automation-catch-up",
   resolveStartupAutomationCatchUp: "buildwarden:resolve-startup-automation-catch-up",
   automationStarted: "buildwarden:automation-started",

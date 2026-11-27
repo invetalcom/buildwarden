@@ -99,8 +99,8 @@ export class OrchestrationMessageService extends AppService<
 
   /** A live worker alone may belong to another turn; the turn's own step names the messages it carries. */
   private childTurnTookMessages(childRunId: string, messages: OrchestrationTaskMessageRecord[]): boolean {
-    return this.services.activeWorkers.runWorkers.has(childRunId) && this.db.getRunSteps(childRunId).some((step) => {
-      const { orchestrationMessageIds } = parseMetadataRecord(step.metadataJson);
+    return this.services.activeWorkers.runWorkers.has(childRunId) && this.db.listRunStepMetadataWithKey(childRunId, "orchestrationMessageIds").some((metadataJson) => {
+      const { orchestrationMessageIds } = parseMetadataRecord(metadataJson);
       return Array.isArray(orchestrationMessageIds) && messages.every((message) => orchestrationMessageIds.includes(message.id));
     });
   }

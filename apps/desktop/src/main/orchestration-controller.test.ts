@@ -931,6 +931,32 @@ describe("a message that cannot reach its child", () => {
     expect(prompt).toContain("could not be delivered: Credentials are unavailable");
   });
 
+  it.each([
+    ["counts messages as delivered when the child's live turn recorded them", true, "delivered"],
+    ["fails messages that the child's live turn did not record", false, "failed"],
+  ] as const)("%s", async (_label, turnTookMessages, expectedStatus) => {
+    const { db, orchestration, internals, followUp, addChildTask } = await fixture();
+    const { child, task } = addChildTask("child", "running");
+    db.updateRunStatus(child.id, "completed");
+    const message = db.createOrchestrationTaskMessage({ orchestrationId: orchestration.id, taskId: task.id, source: "coordinator", content: "Also check X" });
+    db.updateOrchestration(orchestration.id, { status: "waiting", wakeMode: "all-terminal", wakeTaskIds: [task.id] });
+    db.appendRunStep(child.id, "log", "Messages", "Earlier turn", JSON.stringify({ orchestrationMessageIds: ["earlier-message"] }));
+    followUp.mockImplementationOnce(async () => {
+      // The turn started on a worker and wrote its prompt step, then the start reported an error.
+      internals.runWorkers.set(child.id, {});
+      if (turnTookMessages) db.appendRunStep(child.id, "log", "Messages", "Also check X", JSON.stringify({ orchestrationMessageIds: [message.id] }));
+      throw new Error("Late start failure");
+    });
+
+    try {
+      await internals.handleOrchestrationChildTerminal(child.id);
+    } finally {
+      internals.runWorkers.delete(child.id);
+    }
+
+    expect(db.listOrchestrationTaskMessages(orchestration.id).map((entry) => entry.status)).toEqual([expectedStatus]);
+  });
+
   it("reports the failure to whoever sent a message to a stopped child", async () => {
     const { db, controller, orchestration, followUp, addChildTask } = await fixture();
     const { task } = addChildTask("child", "completed");
