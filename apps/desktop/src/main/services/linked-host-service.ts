@@ -40,6 +40,10 @@ export class LinkedHostService extends AppService {
     if (input.id && !existing) throw new Error(`Linked host ${input.id} does not exist.`);
     const token = input.token?.trim();
     if (!existing && !token) throw new Error("Paste the agent token the host created.");
+    // A saved token belongs to the host that issued it; another address must not receive it.
+    if (existing && !token && new URL(existing.mcpUrl).origin !== url.origin) {
+      throw new Error("The host's address changed. Paste an agent token from the new host.");
+    }
     const host: LinkedHostRecord = { id: existing?.id ?? randomUUID(), label, mcpUrl: url.toString() };
     if (token) await this.secrets.saveSecret(tokenSecretKey(host.id), token);
     this.db.setSetting(APP_SETTING_KEYS.linkedHosts, JSON.stringify([...hosts.filter((entry) => entry.id !== host.id), host]));

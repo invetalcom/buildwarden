@@ -109,6 +109,15 @@ describe("delegating to a linked host", () => {
     expect((await tool("buildwarden_orchestration_get", {})).body).toMatchObject({ linkedHosts: [{ id: linked.id, label: "Build box" }] });
   });
 
+  it("keeps a host's token for a new name, but asks for a new one when its address changes", async () => {
+    const { controller, linked } = await setup();
+    await expect(controller.saveLinkedHost({ id: linked.id, label: "Renamed", mcpUrl: linked.mcpUrl })).resolves.toMatchObject({ label: "Renamed" });
+    await expect(controller.saveLinkedHost({ id: linked.id, label: "Renamed", mcpUrl: "https://elsewhere.example.ts.net/mcp" }))
+      .rejects.toThrow("Paste an agent token from the new host");
+    await expect(controller.saveLinkedHost({ id: linked.id, label: "Renamed", mcpUrl: "https://elsewhere.example.ts.net/mcp", token: "new" }))
+      .resolves.toMatchObject({ mcpUrl: "https://elsewhere.example.ts.net/mcp" });
+  });
+
   it("starts the task on the host and publishes the host run's summary when it ends", async () => {
     const { db, host, delegate, taskByClientId, remote, wake } = await setup();
     expect((await delegate("t1")).ok).toBe(true);
