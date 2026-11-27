@@ -97,17 +97,38 @@ export class RunDeletionService extends AppService<
     };
   }
 
-  /** The run that a run is deleted with. A review belongs to its run, and that run may in turn belong to a coordinator. */
+  /**
+   * The run that a run is deleted with. A review belongs to its run, and that run may in turn
+   * belong to a coordinator, which with nested delegation may belong to one of its own.
+   */
   private resolveRetentionRootRunId(run: RunRecord): string {
-    const rootRunId = retentionRootRunId(run);
-    const childTask = this.db.getOrchestrationTaskByChildRunId(rootRunId);
-    if (!childTask) return rootRunId;
-    try {
-      return this.db.getOrchestration(childTask.orchestrationId).coordinatorRunId;
-    } catch {
-      /* The orchestration is gone; the run it left behind stands on its own. */
-      return rootRunId;
+    let rootRunId = retentionRootRunId(run);
+    for (let depth = 0; depth < 16; depth += 1) {
+      const childTask = this.db.getOrchestrationTaskByChildRunId(rootRunId);
+      if (!childTask) break;
+      try {
+        rootRunId = this.db.getOrchestration(childTask.orchestrationId).coordinatorRunId;
+      } catch {
+        /* The orchestration is gone; the run it left behind stands on its own. */
+        break;
+      }
     }
+    return rootRunId;
+  }
+
+  /** Every run below a coordinator, the runs of its children's own orchestrations included. */
+  private delegatedRunIds(coordinatorRunId: string): string[] {
+    const runIds: string[] = [];
+    const coordinators = [coordinatorRunId];
+    for (let index = 0; index < coordinators.length && index < 4_096; index += 1) {
+      const orchestration = this.db.getOrchestrationByCoordinatorRunId(coordinators[index]!);
+      for (const task of orchestration ? this.db.listOrchestrationTasks(orchestration.id) : []) {
+        if (!task.childRunId) continue;
+        runIds.push(task.childRunId);
+        coordinators.push(task.childRunId);
+      }
+    }
+    return runIds;
   }
 
   /** Every run that would now be deleted together with these runs, reviews that joined since the plan included. */
@@ -121,11 +142,8 @@ export class RunDeletionService extends AppService<
         continue;
       }
       const rootRunId = this.resolveRetentionRootRunId(run);
-      const orchestration = this.db.getOrchestrationByCoordinatorRunId(rootRunId);
-      const childRunIds = orchestration
-        ? this.db.listOrchestrationTasks(orchestration.id).flatMap((task) => task.childRunId ? [task.childRunId] : [])
-        : [];
-      for (const memberId of [runId, rootRunId, ...childRunIds]) {
+      // The same tree the deletion removes, so a bookmark or recent use anywhere in it protects it.
+      for (const memberId of [runId, rootRunId, ...this.delegatedRunIds(rootRunId)]) {
         group.add(memberId);
         for (const reviewRunId of this.db.listCouncilChildRunIds(memberId)) group.add(reviewRunId);
       }

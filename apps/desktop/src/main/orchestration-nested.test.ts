@@ -176,6 +176,22 @@ describe("nested delegation", () => {
     expect(db.getOrchestrationByCoordinatorRunId(child.id)).toBeNull();
   });
 
+  it("lets a run kept for later anywhere in a nested tree protect the tree from data-retention cleanup", async () => {
+    const { db, controller, orchestration, root, addChild } = await fixture(2);
+    const top = orchestration.getOrCreateOrchestration(root);
+    const { child } = addChild(top, root, "c1");
+    const nested = orchestration.getOrCreateOrchestration(child);
+    const { child: grandchild } = addChild(nested, child, "g1");
+    const old = new Date(Date.now() - 40 * 24 * 60 * 60 * 1_000).toISOString();
+    (db as unknown as { run(sql: string, params: unknown[]): void }).run("update runs set status = 'completed', updated_at = ?, created_at = ?", [old, old]);
+    const deletion = serviceOf(controller, "runDeletion");
+    expect((await deletion.getDataRetentionCleanupImpact(30)).runIds).toEqual(expect.arrayContaining([root.id, child.id, grandchild.id]));
+
+    db.updateRunListVisibility(grandchild.id, "for-later");
+    (db as unknown as { run(sql: string, params: unknown[]): void }).run("update runs set updated_at = ?", [old]);
+    expect((await deletion.getDataRetentionCleanupImpact(30)).runIds).toEqual([]);
+  });
+
   it("keeps a child's permission to delegate when it restarts from the beginning", async () => {
     const { db, controller, orchestration, root, addChild } = await fixture(2);
     const top = orchestration.getOrCreateOrchestration(root);
