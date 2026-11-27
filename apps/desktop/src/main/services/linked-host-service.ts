@@ -3,7 +3,12 @@ import { McpHttpClient } from "@buildwarden/agent-runtime";
 import { APP_SETTING_KEYS, MAX_LINKED_HOSTS, parseLinkedHostsSetting, type LinkedHostInput, type LinkedHostRecord } from "@buildwarden/shared";
 import { AppService } from "./app-service";
 
-const tokenSecretKey = (hostId: string) => `linked-host-token:${hostId}`;
+/**
+ * A token is stored under its host and that host's origin. A call reads the record and then the
+ * secret for the record's own origin, so while an address changes it never pairs the old address
+ * with the new token, or the new address with the old one.
+ */
+const tokenSecretKey = (hostId: string, mcpUrl: string) => `linked-host-token:${hostId}:${new URL(mcpUrl).origin}`;
 
 /** A host's answer to a tool call; the call failed when the host says so. */
 export class LinkedHostToolError extends Error {}
@@ -60,18 +65,20 @@ export class LinkedHostService extends AppService {
       throw new Error("The host's address changed. Paste an agent token from the new host.");
     }
     const host: LinkedHostRecord = { id: existing?.id ?? randomUUID(), label, mcpUrl: url.toString() };
-    if (token) await this.secrets.saveSecret(tokenSecretKey(host.id), token);
+    if (token) await this.secrets.saveSecret(tokenSecretKey(host.id, host.mcpUrl), token);
     // Read again after the await, so a change that finished meanwhile is not written over.
     const current = this.listLinkedHosts();
     this.db.setSetting(APP_SETTING_KEYS.linkedHosts, JSON.stringify([...current.filter((entry) => entry.id !== host.id), host]));
+    if (existing && new URL(existing.mcpUrl).origin !== url.origin) await this.secrets.deleteSecret(tokenSecretKey(existing.id, existing.mcpUrl));
     return host;
   }
 
   removeLinkedHost(hostId: string): Promise<void> {
     return this.serialize(async () => {
       const hosts = this.listLinkedHosts();
+      const removed = hosts.find((entry) => entry.id === hostId);
       this.db.setSetting(APP_SETTING_KEYS.linkedHosts, JSON.stringify(hosts.filter((entry) => entry.id !== hostId)));
-      await this.secrets.deleteSecret(tokenSecretKey(hostId));
+      if (removed) await this.secrets.deleteSecret(tokenSecretKey(removed.id, removed.mcpUrl));
     });
   }
 
@@ -84,7 +91,7 @@ export class LinkedHostService extends AppService {
   /** Calls one of the host's MCP tools and returns its structured result. */
   async callHostTool<T = Record<string, unknown>>(hostId: string, name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<T> {
     const host = this.getLinkedHost(hostId);
-    const token = await this.secrets.readSecret(tokenSecretKey(host.id));
+    const token = await this.secrets.readSecret(tokenSecretKey(host.id, host.mcpUrl));
     if (!token) throw new Error(`The token for linked host ${host.label} is missing. Save it again in Settings.`);
     const client = new McpHttpClient({ name: host.label, url: host.mcpUrl, headers: { Authorization: `Bearer ${token}` } });
     try {

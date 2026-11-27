@@ -100,7 +100,7 @@ const setup = async () => {
     const orchestration = db.getOrchestrationByCoordinatorRunId(coordinator.id)!;
     return db.getOrchestrationTaskByClientTaskId(orchestration.id, clientTaskId)!;
   };
-  return { db, controller, host, linked, tool, wake, remote, delegate, taskByClientId, coordinator };
+  return { db, controller, host, linked, tool, wake, remote, delegate, taskByClientId, coordinator, secrets };
 };
 
 describe("delegating to a linked host", () => {
@@ -133,6 +133,17 @@ describe("delegating to a linked host", () => {
       .rejects.toThrow("Paste an agent token from the new host");
     await expect(controller.saveLinkedHost({ id: linked.id, label: "Renamed", mcpUrl: "https://elsewhere.example.ts.net/mcp", token: "new" }))
       .resolves.toMatchObject({ mcpUrl: "https://elsewhere.example.ts.net/mcp" });
+  });
+
+  it("keeps each token under its host's address, so no call pairs one address with the other's token", async () => {
+    const { controller, linked, secrets } = await setup();
+    const oldKey = `linked-host-token:${linked.id}:${new URL(linked.mcpUrl).origin}`;
+    expect(secrets.has(oldKey)).toBe(true);
+    await controller.saveLinkedHost({ id: linked.id, label: "Moved", mcpUrl: "https://elsewhere.example.ts.net/mcp", token: "new" });
+    expect(secrets.get(`linked-host-token:${linked.id}:https://elsewhere.example.ts.net`)).toBe("new");
+    expect(secrets.has(oldKey)).toBe(false);
+    await controller.removeLinkedHost(linked.id);
+    expect([...secrets.keys()].filter((key) => key.startsWith("linked-host-token:"))).toEqual([]);
   });
 
   it("starts the task on the host and publishes the host run's summary when it ends", async () => {
