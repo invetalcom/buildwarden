@@ -80,6 +80,11 @@ describe("nested delegation", () => {
     expect(grandchild.delegationEnabled).toBeFalsy();
     expect(orchestration.delegationDepth(grandchild)).toBe(2);
     expect(() => orchestration.getOrCreateOrchestration({ ...grandchild, delegationEnabled: true })).toThrow("may not delegate further");
+
+    // Refreshing the nested team keeps the inherited limit too.
+    db.updateOrchestrationTask(db.getOrchestrationTaskByChildRunId(grandchild.id)!.id, { status: "completed" });
+    await orchestration.refreshOrchestrationTeam(child.id);
+    expect(db.getOrchestration(nested.id).teamSnapshot.maxDelegationDepth).toBe(2);
   });
 
   it("publishes a coordinating child's result only after its own tasks are done", async () => {

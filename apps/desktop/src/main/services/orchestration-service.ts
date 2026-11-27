@@ -345,7 +345,12 @@ export class OrchestrationService extends AppService<
     if (tasks.some((task) => ORCHESTRATION_ACTIVE_TASK_STATUSES.has(task.status) || task.status === "pending")) {
       throw new Error("The frozen team can be refreshed only when no tasks are pending or running.");
     }
-    const team = this.resolveOrchestrationTeamSettings(this.db.getRun(coordinatorRunId).modelId);
+    const resolved = this.resolveOrchestrationTeamSettings(this.db.getRun(coordinatorRunId).modelId);
+    // A nested coordinator keeps the depth limit its tree started with; a settings change must not deepen it.
+    const nested = this.db.getOrchestrationTaskByChildRunId(coordinatorRunId) !== null;
+    const inheritedDepth = orchestration.teamSnapshot.maxDelegationDepth;
+    const team = nested ? { ...resolved, maxDelegationDepth: inheritedDepth } : resolved;
+    if (nested && inheritedDepth === undefined) delete team.maxDelegationDepth;
     if (team.roles.length === 0) throw new Error("Enable at least one model, or configure a valid orchestration role.");
     this.db.updateOrchestration(orchestration.id, { teamSnapshot: team });
     this.db.appendOrchestrationEvent({
