@@ -323,6 +323,28 @@ describe("delegating to a linked host", () => {
     expect(host.cancelled).toEqual(["host-run-1"]);
   });
 
+  it("still stops the host run when neither the start nor the failure can be saved", async () => {
+    const { db, host, delegate, taskByClientId, remote } = await setup();
+    const save = db.flushDurable.bind(db);
+    let failing = false;
+    // Every save fails from the moment the started run is recorded.
+    vi.spyOn(db, "flushDurable").mockImplementation(async () => {
+      if (db.listActiveRemoteOrchestrationTasks().some((task) => task.status === "running" && task.remote?.runId)) failing = true;
+      if (failing) throw new Error("disk full");
+      await save();
+    });
+    const delegated = delegate("t18");
+    await vi.waitFor(() => expect(host.created).toHaveLength(1));
+    await delegated;
+    // Polling runs on its own, without a saved record to start it.
+    await vi.waitFor(() => expect((remote as unknown as { timer: unknown }).timer).not.toBeNull());
+    await vi.waitFor(async () => {
+      await remote.pollRemoteTasks();
+      expect(host.cancelled).toEqual(["host-run-1"]);
+    });
+    expect(taskByClientId("t18").status).toBe("failed");
+  });
+
   it("keeps stopping the host run when the start cannot be saved after the host created it", async () => {
     const { db, host, delegate, taskByClientId, remote } = await setup();
     const save = db.flushDurable.bind(db);

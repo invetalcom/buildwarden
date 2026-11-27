@@ -164,12 +164,19 @@ export class OrchestrationRemoteService extends AppService<"linkedHosts" | "orch
         return;
       }
       // The host runs the task, but BuildWarden could not record it. The task fails here, and its
-      // host run keeps an owner: polling stops it until the host confirms.
-      await this.settle(task.id, {
-        status: "failed", summary: null, remote: { ...startedRemote, stopPending: true },
-        errorMessage: `BuildWarden could not record the run ${remote.hostLabel} started (${message}); it stops that run.`,
-      });
+      // host run keeps an owner: polling stops it until the host confirms. Polling starts first,
+      // and when the failure cannot be saved either, the stop is kept in memory.
+      const pendingStop = { ...task, remote: { ...startedRemote, stopPending: true } };
       this.ensurePolling();
+      try {
+        await this.settle(task.id, {
+          status: "failed", summary: null, remote: pendingStop.remote,
+          errorMessage: `BuildWarden could not record the run ${remote.hostLabel} started (${message}); it stops that run.`,
+        });
+      } catch (settleError) {
+        this.unsavedStops.set(task.id, pendingStop);
+        this.logControllerWarn("Could not record a remote task whose host run was started. BuildWarden keeps retrying the stop while it runs; a restart before the host confirms would lose the run.", { taskId: task.id, hostRunId: startedRemote.runId, error: settleError });
+      }
     }
   }
 
