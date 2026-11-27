@@ -59,6 +59,7 @@ import type {
   OrchestrationEffectKind,
   OrchestrationEffectRecord,
   OrchestrationTaskRecord,
+  OrchestrationTaskRemote,
   OrchestrationTaskResultRecord,
   OrchestrationTaskStatus,
   OrchestrationTeamSettings,
@@ -173,9 +174,23 @@ const ORCHESTRATION_TASK_SELECT = `select id, orchestration_id as orchestrationI
   client_task_id as clientTaskId, title, prompt, role_id as roleId, model_id as modelId, intent, status, permission_mode as permissionMode,
   child_run_id as childRunId, retry_of_task_id as retryOfTaskId, summary, error_message as errorMessage,
   attention_reason as attentionReason, adoption_status as adoptionStatus, deferred_until as deferredUntil,
-  input_tokens as inputTokens, output_tokens as outputTokens,
+  input_tokens as inputTokens, output_tokens as outputTokens, remote_json as remoteJson,
   created_at as createdAt, updated_at as updatedAt, started_at as startedAt, finished_at as finishedAt
   from orchestration_tasks`;
+
+type StoredOrchestrationTaskRecord = Omit<OrchestrationTaskRecord, "remote"> & { remoteJson: string | null };
+
+/** A task row with its remote placement read, when it runs on a linked host. */
+const toOrchestrationTask = (row: StoredOrchestrationTaskRecord): OrchestrationTaskRecord => {
+  const { remoteJson, ...task } = row;
+  if (!remoteJson) return { ...task, remote: null };
+  try {
+    const parsed = JSON.parse(remoteJson) as unknown;
+    return { ...task, remote: parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as OrchestrationTaskRemote : null };
+  } catch {
+    return { ...task, remote: null };
+  }
+};
 const ORCHESTRATION_EFFECT_SELECT = `select id, orchestration_id as orchestrationId, task_id as taskId, kind, status,
   payload_json as payloadJson, attempts, error_message as errorMessage, created_at as createdAt, updated_at as updatedAt
   from orchestration_effects`;
@@ -5964,6 +5979,8 @@ export class BuildWardenDatabase {
     executionOptions?: ProviderExecutionOptions | null;
     childRunId?: string | null;
     retryOfTaskId?: string | null;
+    /** Set for a task that runs on a linked host instead of in a local child run. */
+    remote?: OrchestrationTaskRemote | null;
   }): OrchestrationTaskRecord {
     const id = createId();
     const timestamp = nowIso();
@@ -5971,8 +5988,8 @@ export class BuildWardenDatabase {
       `insert into orchestration_tasks (
         id, orchestration_id, wave_id, client_task_id, title, prompt, role_id, model_id, intent, permission_mode, status,
         child_run_id, retry_of_task_id, summary, error_message, attention_reason, adoption_status,
-        input_tokens, output_tokens, created_at, updated_at, started_at, finished_at, execution_options_json
-      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, null, null, null, 'none', 0, 0, ?, ?, null, null, ?)`,
+        input_tokens, output_tokens, created_at, updated_at, started_at, finished_at, execution_options_json, remote_json
+      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, null, null, null, 'none', 0, 0, ?, ?, null, null, ?, ?)`,
       [
         id,
         input.orchestrationId,
@@ -5989,6 +6006,7 @@ export class BuildWardenDatabase {
         timestamp,
         timestamp,
         input.executionOptions && Object.keys(input.executionOptions).length > 0 ? JSON.stringify(input.executionOptions) : null,
+        input.remote ? JSON.stringify(input.remote) : null,
       ],
     );
     return this.getOrchestrationTask(id);
@@ -6164,12 +6182,12 @@ export class BuildWardenDatabase {
   }
 
   getOrchestrationTask(id: string): OrchestrationTaskRecord {
-    const task = this.first<OrchestrationTaskRecord>(
+    const task = this.first<StoredOrchestrationTaskRecord>(
       `${ORCHESTRATION_TASK_SELECT} where id = ?`,
       [id],
     );
     if (!task) throw new Error(`Orchestration task not found: ${id}`);
-    return task;
+    return toOrchestrationTask(task);
   }
 
   /** Latest reported state of each provider-native subagent in a run, without loading its other steps. */
@@ -6189,28 +6207,38 @@ export class BuildWardenDatabase {
   }
 
   findOrchestrationTask(id: string): OrchestrationTaskRecord | null {
-    return this.first<OrchestrationTaskRecord>(`${ORCHESTRATION_TASK_SELECT} where id = ?`, [id]);
+    const task = this.first<StoredOrchestrationTaskRecord>(`${ORCHESTRATION_TASK_SELECT} where id = ?`, [id]);
+    return task ? toOrchestrationTask(task) : null;
   }
 
   getOrchestrationTaskByChildRunId(runId: string): OrchestrationTaskRecord | null {
-    return this.first<OrchestrationTaskRecord>(
+    const task = this.first<StoredOrchestrationTaskRecord>(
       `${ORCHESTRATION_TASK_SELECT} where child_run_id = ?`,
       [runId],
     );
+    return task ? toOrchestrationTask(task) : null;
   }
 
   getOrchestrationTaskByClientTaskId(orchestrationId: string, clientTaskId: string): OrchestrationTaskRecord | null {
-    return this.first<OrchestrationTaskRecord>(
+    const task = this.first<StoredOrchestrationTaskRecord>(
       `${ORCHESTRATION_TASK_SELECT} where orchestration_id = ? and client_task_id = ?`,
       [orchestrationId, clientTaskId],
     );
+    return task ? toOrchestrationTask(task) : null;
   }
 
   listOrchestrationTasks(orchestrationId: string): OrchestrationTaskRecord[] {
-    return this.all<OrchestrationTaskRecord>(
+    return this.all<StoredOrchestrationTaskRecord>(
       `${ORCHESTRATION_TASK_SELECT} where orchestration_id = ? order by created_at asc`,
       [orchestrationId],
-    );
+    ).map(toOrchestrationTask);
+  }
+
+  /** Tasks on linked hosts that are still going, across all orchestrations. */
+  listActiveRemoteOrchestrationTasks(): OrchestrationTaskRecord[] {
+    return this.all<StoredOrchestrationTaskRecord>(
+      `${ORCHESTRATION_TASK_SELECT} where remote_json is not null and status in ('pending', 'provisioning', 'queued', 'running', 'waiting-input', 'blocked') order by created_at asc`,
+    ).map(toOrchestrationTask);
   }
 
   /**
@@ -6244,13 +6272,15 @@ export class BuildWardenDatabase {
       | "outputTokens"
       | "startedAt"
       | "finishedAt"
+      | "remote"
     >>,
   ): OrchestrationTaskRecord {
     const existing = this.getOrchestrationTask(id);
+    const remote = fields.remote !== undefined ? fields.remote : existing.remote ?? null;
     this.run(
       `update orchestration_tasks set status = ?, child_run_id = ?, summary = ?, error_message = ?,
        attention_reason = ?, adoption_status = ?, deferred_until = ?, input_tokens = ?, output_tokens = ?, updated_at = ?,
-       started_at = ?, finished_at = ? where id = ?`,
+       started_at = ?, finished_at = ?, remote_json = ? where id = ?`,
       [
         fields.status ?? existing.status,
         fields.childRunId !== undefined ? fields.childRunId : existing.childRunId,
@@ -6264,6 +6294,7 @@ export class BuildWardenDatabase {
         nowIso(),
         fields.startedAt !== undefined ? fields.startedAt : existing.startedAt,
         fields.finishedAt !== undefined ? fields.finishedAt : existing.finishedAt,
+        remote ? JSON.stringify(remote) : null,
         id,
       ],
     );
@@ -6759,6 +6790,7 @@ export class BuildWardenDatabase {
     this.ensureColumn("orchestration_tasks", "permission_mode", "text not null default 'inherit'");
     this.ensureColumn("orchestrations", "coordinator_token_baseline", "integer not null default 0");
     this.ensureColumn("orchestration_tasks", "execution_options_json", "text");
+    this.ensureColumn("orchestration_tasks", "remote_json", "text");
     this.ensureColumn("orchestration_operations", "error_code", "text");
     // Outbox of side effects whose state change must survive a crash between phases.
     this.exec(`

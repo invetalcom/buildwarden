@@ -16,6 +16,7 @@ export class OrchestrationRecoveryService extends AppService<
   | "orchestration"
   | "orchestrationCoordinator"
   | "orchestrationDispatch"
+  | "orchestrationRemote"
   | "orchestrationResults"
   | "processes"
   | "runDeletion"
@@ -122,6 +123,7 @@ export class OrchestrationRecoveryService extends AppService<
   }
 
   async reconcileOrchestrationsAfterRestart(): Promise<void> {
+    this.services.orchestrationRemote.resumeRemoteTasks();
     // Keep interrupted receipts: a provider side effect may already have happened.
     this.db.recoverInterruptedOrchestrationOperations();
     this.db.recoverOrchestrationMessageDeliveries();
@@ -268,6 +270,8 @@ export class OrchestrationRecoveryService extends AppService<
       const tasks = this.db.listOrchestrationTasks(orchestration.id);
       const reconcileTask = async (task: OrchestrationTaskRecord): Promise<void> => {
         if (!["provisioning", "queued", "running", "waiting-input"].includes(task.status)) return;
+        // Runs on a linked host, which kept running while this app was closed.
+        if (task.remote) return;
         if (!task.childRunId) {
           this.db.updateOrchestrationTask(task.id, {
             status: "pending",

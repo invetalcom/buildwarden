@@ -2482,7 +2482,56 @@ export interface OrchestrationTaskRecord {
   updatedAt: string;
   startedAt: string | null;
   finishedAt: string | null;
+  /** Set when the task runs on a linked host; it then has no local child run. Optional for older records. */
+  remote?: OrchestrationTaskRemote | null;
 }
+
+/** Where a delegated task runs on a linked host, and the run it became there. */
+export interface OrchestrationTaskRemote {
+  hostId: string;
+  hostLabel: string;
+  /** The host's project; null lets the host pick the one with this project's name. */
+  projectId: string | null;
+  /** A model id from the host's list_models; null uses the host's default. */
+  modelId: string | null;
+  /** The host's run, once it started. */
+  runId: string | null;
+  /** The host's request the run waits for, as last seen. */
+  waitingFor?: "approval" | "input" | null;
+}
+
+/** Another BuildWarden host this one may delegate tasks to, through its MCP endpoint. */
+export interface LinkedHostRecord {
+  id: string;
+  label: string;
+  /** The host's /mcp URL. Its token is kept in the secret store. */
+  mcpUrl: string;
+}
+
+export interface LinkedHostInput {
+  id?: string;
+  label: string;
+  mcpUrl: string;
+  /** Required for a new host; omitted keeps the saved token. */
+  token?: string;
+}
+
+export const parseLinkedHostsSetting = (raw: string | undefined | null): LinkedHostRecord[] => {
+  if (!raw?.trim()) return [];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.flatMap((entry): LinkedHostRecord[] => {
+      if (!entry || typeof entry !== "object") return [];
+      const { id, label, mcpUrl } = entry as Record<string, unknown>;
+      return typeof id === "string" && typeof label === "string" && typeof mcpUrl === "string" && id && mcpUrl
+        ? [{ id, label: label.slice(0, 80), mcpUrl }]
+        : [];
+    }).slice(0, 20);
+  } catch {
+    return [];
+  }
+};
 
 export interface OrchestrationEventRecord {
   id: string;
@@ -5504,6 +5553,12 @@ export interface DesktopApi {
   getRemoteAccessStatus(): Promise<RemoteAccessStatus>;
   listHostDirectories(input?: HostDirectoryBrowseInput): Promise<HostDirectoryListing>;
   createRemoteAccessPairing(input?: RemoteAccessPairingInput): Promise<RemoteAccessPairingGrant>;
+  /** Other BuildWarden hosts orchestrations may delegate tasks to. */
+  listLinkedHosts(): Promise<LinkedHostRecord[]>;
+  saveLinkedHost(input: LinkedHostInput): Promise<LinkedHostRecord>;
+  removeLinkedHost(hostId: string): Promise<void>;
+  /** Connects to a linked host and lists its projects. */
+  checkLinkedHost(hostId: string): Promise<{ projects: Array<{ id: string; name: string }> }>;
   /** Issues a revocable session for an MCP client outside the app, such as Claude Code or Codex in a terminal. */
   createRemoteAccessAgentToken(input?: Pick<RemoteAccessPairingInput, "label" | "scopes">): Promise<RemoteAccessAgentToken>;
   listRemoteAccessSessions(): Promise<RemoteAccessSession[]>;
@@ -6697,6 +6752,10 @@ export const IPC_CHANNELS = {
   listHostDirectories: "buildwarden:list-host-directories",
   createRemoteAccessPairing: "buildwarden:create-remote-access-pairing",
   createRemoteAccessAgentToken: "buildwarden:create-remote-access-agent-token",
+  listLinkedHosts: "buildwarden:list-linked-hosts",
+  saveLinkedHost: "buildwarden:save-linked-host",
+  removeLinkedHost: "buildwarden:remove-linked-host",
+  checkLinkedHost: "buildwarden:check-linked-host",
   listRemoteAccessSessions: "buildwarden:list-remote-access-sessions",
   revokeRemoteAccessSession: "buildwarden:revoke-remote-access-session",
   getNetworkProxySettings: "buildwarden:get-network-proxy-settings",
@@ -6904,6 +6963,7 @@ export const APP_SETTING_KEYS = {
   projectForgeIssuePreferences: "projectForgeIssuePreferences",
   /** JSON encoded {@link OrchestrationTeamSettings}. */
   orchestrationTeam: "orchestrationTeam",
+  linkedHosts: "linkedHosts",
   /** JSON encoded {@link CouncilSettings}. */
   council: "council",
   /** JSON object with app-wide outbound proxy host/port/user settings (password stored in secure storage). */

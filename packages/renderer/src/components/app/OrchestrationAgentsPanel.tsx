@@ -291,7 +291,7 @@ export const OrchestrationAgentsPanel = ({
       },
       description: [
         role?.name ?? task.roleId,
-        modelLabels.get(task.modelId) ?? task.modelId,
+        task.remote ? `on ${task.remote.hostLabel}` : modelLabels.get(task.modelId) ?? task.modelId,
         task.intent,
         formatElapsed(task),
         task.adoptionStatus !== "none" ? `changes: ${task.adoptionStatus}` : null,
@@ -393,7 +393,9 @@ export const OrchestrationAgentsPanel = ({
                   <div className="min-w-0 flex-1">
                     <h3 className="text-sm font-semibold text-[var(--ec-text)]">{selectedTask.title}</h3>
                     <p className="mt-0.5 text-[11px] text-[var(--ec-muted)]">
-                      {modelLabels.get(selectedTask.modelId) ?? selectedTask.modelId} · {formatCount.format(selectedTask.inputTokens + selectedTask.outputTokens)} tokens
+                      {selectedTask.remote
+                        ? `${selectedTask.remote.modelId ?? "Default model"} on ${selectedTask.remote.hostLabel}${selectedTask.remote.runId ? ` · run ${selectedTask.remote.runId}` : ""}`
+                        : `${modelLabels.get(selectedTask.modelId) ?? selectedTask.modelId} · ${formatCount.format(selectedTask.inputTokens + selectedTask.outputTokens)} tokens`}
                     </p>
                   </div>
                 </div>

@@ -123,6 +123,9 @@ export class OrchestrationMessageService extends AppService<
     delivery: OrchestrationMessageDelivery = "auto",
   ) {
     const task = this.db.getOrchestrationTask(input.taskId);
+    if (task.remote) {
+      throw new OrchestrationToolError("delivery_unavailable", `Task ${task.id} runs on ${task.remote.hostLabel}; delegate a new task, or continue its run on that host.`);
+    }
     const content = input.content.trim();
     if (!content) throw new Error("Enter a message for the child task.");
     if (task.adoptionStatus === "applying" || task.adoptionStatus === "adopted") {

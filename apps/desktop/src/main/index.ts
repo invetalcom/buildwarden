@@ -64,6 +64,7 @@ import {
   type RunInput,
   type AcpAgentSessionImportInput,
   type RemoteAccessAgentToken,
+  type LinkedHostInput,
   REMOTE_ACCESS_MCP_PATH,
   type UsageCostReportInput,
   type SubscriptionLimitsInput,
@@ -2062,6 +2063,10 @@ const bootstrap = async (): Promise<void> => {
     controller.recheckProviderCapabilities(providerAccountId),
   );
   ipcMain.handle(IPC_CHANNELS.listAcpRegistryAgents, () => controller.listAcpRegistryAgents());
+  ipcMain.handle(IPC_CHANNELS.listLinkedHosts, () => controller.listLinkedHosts());
+  ipcMain.handle(IPC_CHANNELS.saveLinkedHost, (_, input: LinkedHostInput) => controller.saveLinkedHost(input));
+  ipcMain.handle(IPC_CHANNELS.removeLinkedHost, (_, hostId: string) => controller.removeLinkedHost(hostId));
+  ipcMain.handle(IPC_CHANNELS.checkLinkedHost, (_, hostId: string) => controller.checkLinkedHost(hostId));
   ipcMain.handle(IPC_CHANNELS.listAcpAgentSessions, (_, providerAccountId: string, projectId: string) =>
     controller.listAcpAgentSessions(providerAccountId, projectId));
   ipcMain.handle(IPC_CHANNELS.importAcpAgentSession, (_, input: AcpAgentSessionImportInput) => controller.importAcpAgentSession(input));

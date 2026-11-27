@@ -62,6 +62,7 @@ export class OrchestrationToolService extends AppService<
   | "orchestrationCoordinator"
   | "orchestrationDispatch"
   | "orchestrationMessages"
+  | "linkedHosts"
   | "providerRuntime"
   | "runDetails"
   | "runInteractions"
@@ -210,6 +211,8 @@ export class OrchestrationToolService extends AppService<
       totalTokens,
       models: await this.describeOrchestrationModels(team, coordinator.projectId),
       roles: team.roles,
+      // Other BuildWarden hosts a task may run on (hostId); their own models and projects apply there.
+      linkedHosts: this.services.linkedHosts.listLinkedHosts().map(({ id, label }) => ({ id, label })),
       tasks: orchestration ? this.listCompactOrchestrationTasks(orchestration.id) : [],
     };
   }
@@ -341,7 +344,7 @@ export class OrchestrationToolService extends AppService<
 
   private listCompactOrchestrationTasks(orchestrationId: string) {
     return this.db.listOrchestrationTasks(orchestrationId)
-      .map((task) => compactOrchestrationTask(task, this.services.orchestrationCoordinator.orchestrationModelName(task.modelId)));
+      .map((task) => compactOrchestrationTask(task, this.services.orchestrationCoordinator.orchestrationTaskModelName(task)));
   }
 
   private async executeIdempotentOrchestrationMutation<T>(
@@ -518,6 +521,9 @@ export class OrchestrationToolService extends AppService<
             const task = this.requireCoordinatorTask(coordinatorRunId, args.taskId);
             if (task.intent !== "implement" || task.status !== "completed") {
               throw new OrchestrationToolError("adoption_not_allowed", "Only a completed implementation task can be proposed for adoption.");
+            }
+            if (task.remote) {
+              throw new OrchestrationToolError("adoption_not_allowed", `The changes of task ${task.id} stay in its run on ${task.remote.hostLabel}; they cannot be adopted here.`);
             }
             const preview = await this.services.orchestrationAdoption.getOrchestrationAdoptionPreview(task.id);
             this.db.updateOrchestrationTask(task.id, {

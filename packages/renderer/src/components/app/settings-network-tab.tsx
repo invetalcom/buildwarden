@@ -25,6 +25,7 @@ import { Switch } from "../ui/switch";
 import { ProviderCliUpdatesSettings } from "./settings-provider-cli-updates";
 import { SettingsRow, SettingsSection } from "./settings-layout";
 import { AgentTokenRow } from "./settings-agent-token-row";
+import { LinkedHostsRow } from "./settings-linked-hosts-row";
 
 export type NetworkProxyDraft = {
   enabled: boolean;
@@ -451,6 +452,7 @@ const RemoteAccessSettings = ({
       ) : null}
 
       <AgentTokenRow enabled={enabled} onIssued={refreshSessions} />
+      <LinkedHostsRow />
 
       <div className={settingsBlockClass}>
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1">

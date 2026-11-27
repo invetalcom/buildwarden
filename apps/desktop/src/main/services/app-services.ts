@@ -38,6 +38,8 @@ import type { RunDeletionService } from "./run-deletion-service";
 import type { RunRecoveryService } from "./run-recovery-service";
 import type { RunForkService } from "./run-fork-service";
 import type { AcpSessionService } from "./acp-session-service";
+import type { LinkedHostService } from "./linked-host-service";
+import type { OrchestrationRemoteService } from "./orchestration-remote-service";
 import type { VisualReplyService } from "./visual-reply-service";
 import type { OrchestrationService } from "./orchestration-service";
 import type { OrchestrationDispatchService } from "./orchestration-dispatch-service";
@@ -95,6 +97,8 @@ export interface AppServices {
   runRecovery: RunRecoveryService;
   runForks: RunForkService;
   acpSessions: AcpSessionService;
+  linkedHosts: LinkedHostService;
+  orchestrationRemote: OrchestrationRemoteService;
   visualReplies: VisualReplyService;
   orchestration: OrchestrationService;
   orchestrationDispatch: OrchestrationDispatchService;

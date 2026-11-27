@@ -22,6 +22,7 @@ export class OrchestrationService extends AppService<
   | "activeWorkers"
   | "orchestrationCoordinator"
   | "orchestrationDispatch"
+  | "orchestrationRemote"
   | "orchestrationResults"
   | "orchestrationTools"
   | "runTurns"
@@ -171,7 +172,8 @@ export class OrchestrationService extends AppService<
   }
 
   get orchestrationRuntimeActions(): OrchestrationRuntimeActions {
-    return new OrchestrationRuntimeActions(this.db, (runId) => this.services.runTurns.cancelRun(runId));
+    return new OrchestrationRuntimeActions(this.db, (runId) => this.services.runTurns.cancelRun(runId),
+      (task) => this.services.orchestrationRemote.cancelRemoteRun(task));
   }
 
   async cancelOrchestrationTasks(orchestration: OrchestrationRecord, taskIds: string[], cancelCoordinator = false): Promise<void> {

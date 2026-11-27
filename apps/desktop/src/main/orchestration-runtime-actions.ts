@@ -6,7 +6,12 @@ export const ORCHESTRATION_TERMINAL_TASK_STATUSES: ReadonlySet<OrchestrationTask
 
 /** Runtime actions with different recovery rules: cancellation is idempotent; message delivery is not. */
 export class OrchestrationRuntimeActions {
-  constructor(private readonly db: BuildWardenDatabase, private readonly cancelRun: (runId: string) => Promise<void>) {}
+  constructor(
+    private readonly db: BuildWardenDatabase,
+    private readonly cancelRun: (runId: string) => Promise<void>,
+    /** Stops a remote task's run on its linked host; it must not throw for an unreachable host. */
+    private readonly cancelRemoteRun: (task: OrchestrationTaskRecord) => Promise<void> = async () => undefined,
+  ) {}
 
   async steer(task: OrchestrationTaskRecord, message: OrchestrationTaskMessageRecord, send: () => Promise<void>): Promise<void> {
     const effect = this.db.prepareOrchestrationRuntimeEffect({ orchestrationId: task.orchestrationId, taskId: task.id,
@@ -79,6 +84,7 @@ export class OrchestrationRuntimeActions {
       return;
     }
     if (task.childRunId) await this.cancelRun(task.childRunId);
+    if (task.remote) await this.cancelRemoteRun(task);
     this.db.transaction(() => {
       this.db.updateOrchestrationTask(task.id, { status: "cancelled", deferredUntil: null, finishedAt: new Date().toISOString(), attentionReason: null });
       // Messages may have been queued after the cancellation intent was recorded.

@@ -30,6 +30,7 @@ export const ORCHESTRATION_COORDINATOR_PROMPT = [
   "6. On resume, synthesize the child results, inspect details only where needed, and delegate another wave only if it adds clear value.",
   "7. BuildWarden wakes you when a child asks a question. Answer it with buildwarden_tasks_respond when the answer follows from the task or the user's instructions; otherwise ask the user first. Only the user can approve a child's shell commands.",
   "8. After buildwarden_adoption_propose, yield with mode adoption-decided if you need to verify or continue once the user has decided.",
+  "   To run a task on another machine, pass a linkedHosts id as hostId. Such a task's changes stay on that host; use it for work that must happen there or that needs no adoption.",
   "9. A rejected tool call returns { error: { code, message, retryable } }. Branch on the code: for model_unavailable choose another eligible model, for execution_option_unsupported drop or change the option, and retry unchanged only when retryable is true.",
   "</buildwarden_orchestration_policy>",
 ].join("\n");
@@ -282,6 +283,9 @@ export const ORCHESTRATION_TOOL_DEFINITIONS: RunToolDefinition[] = [
               roleId: { type: "string", minLength: 1, maxLength: 80 },
               modelId: { type: "string", minLength: 1, maxLength: 160 },
               intent: { type: "string", enum: ["inspect", "implement"] },
+              hostId: { type: "string", minLength: 1, maxLength: 200, description: "Run the task on a linked BuildWarden host from buildwarden_orchestration_get. Its changes stay there and cannot be adopted." },
+              remoteProjectId: { type: "string", minLength: 1, maxLength: 200, description: "With hostId: the host's project; default is its project with this project's name." },
+              remoteModelId: { type: "string", minLength: 1, maxLength: 200, description: "With hostId: one of the host's models; default is the host's default." },
               permissionMode: { type: "string", enum: ["inherit", "supervised"], description: "inherit (default) keeps the parent's access; supervised requires approvals even if the parent has full access. Cannot widen access." },
               executionOptions: {
                 ...objectSchema({
