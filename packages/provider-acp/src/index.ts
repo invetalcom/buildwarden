@@ -1160,6 +1160,7 @@ const ACP_TRANSCRIPT_MAX_CHARS = 2_000_000;
 export async function readAcpSessionTranscript(input: { cwd: string; sessionId: string; config?: Record<string, unknown> }): Promise<{ loaded: boolean; messages: AcpTranscriptMessage[] }> {
   const connection = new AcpConnection(resolveAcpConfig(input.config), input.cwd);
   const messages: AcpTranscriptMessage[] = [];
+  const messageIds = new WeakMap<AcpTranscriptMessage, string | null>();
   let total = 0;
   try {
     connection.start();
@@ -1175,9 +1176,15 @@ export async function readAcpSessionTranscript(input: { cwd: string; sessionId: 
       const text = content.text.slice(0, ACP_TRANSCRIPT_MAX_CHARS - total);
       if (!text) return;
       total += text.length;
+      // Agents that name their messages keep two answers in a row apart; others are grouped by role.
+      const messageId = asString(update.messageId) ?? null;
       const last = messages.at(-1);
-      if (last?.role === role) last.text += text;
-      else messages.push({ role, text });
+      if (last?.role === role && (messageIds.get(last) ?? null) === messageId) last.text += text;
+      else {
+        const message: AcpTranscriptMessage = { role, text };
+        messages.push(message);
+        messageIds.set(message, messageId);
+      }
     });
     const agent = readAgentCapabilities(await initializeAgent(connection, { read: false, write: false }, input.config));
     if (!agent.loadSession) return { loaded: false, messages: [] };

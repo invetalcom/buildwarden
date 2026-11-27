@@ -57,7 +57,9 @@ createInterface({ input: process.stdin }).on("line", async (line) => {
   } else if (method === "session/load") {
     update(params.sessionId, { sessionUpdate: "user_message_chunk", content: { type: "text", text: "Fix the " } });
     update(params.sessionId, { sessionUpdate: "user_message_chunk", content: { type: "text", text: "build" } });
-    update(params.sessionId, { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Fixed it." } });
+    update(params.sessionId, { sessionUpdate: "agent_message_chunk", messageId: "m1", content: { type: "text", text: "Fixed " } });
+    update(params.sessionId, { sessionUpdate: "agent_message_chunk", messageId: "m1", content: { type: "text", text: "it." } });
+    update(params.sessionId, { sessionUpdate: "agent_message_chunk", messageId: "m2", content: { type: "text", text: "Anything else?" } });
     update(params.sessionId, { sessionUpdate: "tool_call", toolCallId: "t", title: "Edit", kind: "edit", status: "completed" });
     update(params.sessionId, { sessionUpdate: "user_message_chunk", content: { type: "text", text: "Thanks" } });
     send({ id, result: {} });
@@ -216,9 +218,9 @@ describe("ACP saved sessions", () => {
       expect((await controller.listAcpAgentSessions(provider.id, project.id)).sessions.map((entry) => [entry.sessionId, entry.imported]))
         .toEqual([["s-new", false], ["s-old", false]]);
       const imported = await controller.importAcpAgentSession({ providerAccountId: provider.id, projectId: project.id, sessionId: "s-new", title: "Fix build" });
-      expect(imported).toMatchObject({ status: "completed", workspaceType: "local", worktreePath: workspace, modelId: model.id, summary: "Fixed it." });
+      expect(imported).toMatchObject({ status: "completed", workspaceType: "local", worktreePath: workspace, modelId: model.id, summary: "Anything else?" });
       expect(db.getRunSteps(imported.id).map((entry) => [entry.eventType, entry.content.split(".")[0]])).toEqual([
-        ["log", "Fix the build"], ["output", "Fixed it"], ["log", "Thanks"], ["status", "Imported the agent's session from Agent"],
+        ["log", "Fix the build"], ["output", "Fixed it"], ["output", "Anything else?"], ["log", "Thanks"], ["status", "Imported the agent's session from Agent"],
       ]);
       expect(db.getProviderAccountSessionRuntime(imported.id, "run", provider.id)?.resumeCursor).toEqual({ sessionId: "s-new" });
       expect((await controller.listAcpAgentSessions(provider.id, project.id)).sessions.map((entry) => entry.imported)).toEqual([true, false]);
@@ -233,6 +235,7 @@ describe("ACP saved sessions", () => {
     await expect(readAcpSessionTranscript({ cwd: workspace, sessionId: "s-new", config })).resolves.toEqual({ loaded: true, messages: [
       { role: "user", text: "Fix the build" },
       { role: "assistant", text: "Fixed it." },
+      { role: "assistant", text: "Anything else?" },
       { role: "user", text: "Thanks" },
     ] });
   });
