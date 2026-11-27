@@ -1,4 +1,5 @@
 import { expect, it } from "vitest";
+import { applyAcpSessionSettings } from "../../../../packages/provider-acp/src/session-apply";
 import { AcpSessionSettings } from "../../../../packages/provider-acp/src/session-settings";
 
 const config = (model: string, mode: string) => ({ configOptions: [
@@ -54,4 +55,26 @@ it("selects advertised reasoning options and refuses mode overrides", async () =
   expect(requests).toEqual(["thinking:high"]);
   await expect(settings.configure({ mode: "plan" }, async () => ({}))).rejects.toThrow("run's model and mode controls");
   await expect(settings.configure({ unknown: "high" }, async () => ({}))).rejects.toThrow("does not offer");
+});
+
+type SettingsConnection = Parameters<typeof applyAcpSessionSettings>[0];
+
+it("never leaves a read-only mode for a code turn by picking a mode that is read-only itself", async () => {
+  const modes = (current: string) => ({ configOptions: [{ id: "mode", type: "select", currentValue: current, options: [
+    { value: "plan", name: "Plan" }, { value: "code", name: "Read Only" }, { value: "default", name: "Default" },
+  ] }] });
+  const requested: string[] = [];
+  const connection: SettingsConnection = { request: async <T>(_method: string, params: unknown) => {
+    const value = (params as { value: string }).value;
+    requested.push(value);
+    return modes(value) as T;
+  } };
+  await applyAcpSessionSettings(connection, "s1", modes("plan"), { modelId: "default", mode: "code" }, new AcpSessionSettings());
+  expect(requested).toEqual(["default"]);
+  // The same for agents that report legacy modes.
+  const legacy = { modes: { currentModeId: "plan", availableModes: [{ id: "plan", name: "Plan" }, { id: "code", name: "Read Only" }, { id: "default", name: "Default" }] } };
+  const legacyRequests: unknown[] = [];
+  const legacyConnection: SettingsConnection = { request: async <T>(_method: string, params: unknown) => { legacyRequests.push(params); return null as T; } };
+  await applyAcpSessionSettings(legacyConnection, "s1", legacy, { modelId: "default", mode: "code" }, new AcpSessionSettings());
+  expect(legacyRequests).toEqual([{ sessionId: "s1", modeId: "default" }]);
 });

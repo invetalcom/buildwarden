@@ -34,7 +34,7 @@ export async function applyAcpSessionSettings(
     const current = mode?.options.find((option) => option.value === mode.currentValue);
     const inspect = (option: { value: string; name: string }) => isAcpInspectMode(option.value, option.name);
     const selected = input.mode === "code"
-      ? (current && !inspect(current) ? current : mode?.options.find((option) => /^(default|normal|code|build)$/i.test(option.value)))
+      ? (current && !inspect(current) ? current : mode?.options.find((option) => /^(default|normal|code|build)$/i.test(option.value) && !inspect(option)))
       : mode?.options.find(inspect);
     if (!selected) {
       if (input.mode === "code" && current && inspect(current)) throw new Error("The ACP session is read-only and offers no recognized code mode.");
@@ -51,7 +51,7 @@ export async function applyAcpSessionSettings(
   // A code follow-up must leave the read-only mode selected on the previous turn. Prefer
   // ordinary code modes; never select a permission-bypass mode merely because it is writable.
   const selected = input.mode === "code"
-    ? (current && !isInspectMode(current) ? current : modes.find((mode) => /^(default|normal|code|build)$/i.test(String(mode.id))))
+    ? (current && !isInspectMode(current) ? current : modes.find((mode) => /^(default|normal|code|build)$/i.test(String(mode.id)) && !isInspectMode(mode)))
     : modes.find(isInspectMode);
   if (typeof selected?.id !== "string") {
     if (input.mode === "code" && current && isInspectMode(current)) {
