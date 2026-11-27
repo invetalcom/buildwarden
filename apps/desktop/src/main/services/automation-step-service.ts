@@ -294,9 +294,23 @@ export class AutomationStepService extends AppService<
    */
   private currentTurnSteps(runId: string, turnMarker: string | null) {
     const steps = this.db.getRunSteps(runId);
-    if (!turnMarker) return steps;
-    const promptIndex = steps.findLastIndex((entry) => entry.eventType === "log" && parseMetadataRecord(entry.metadataJson).automationTurnMarker === turnMarker);
-    return promptIndex < 0 ? [] : steps.slice(promptIndex + 1);
+    const startsTurn = (entry: (typeof steps)[number]) => {
+      if (entry.eventType !== "log") return false;
+      const commandType = parseMetadataRecord(entry.metadataJson).commandType;
+      return commandType === "initial" || commandType === "follow-up";
+    };
+    let from: number;
+    if (turnMarker) {
+      const promptIndex = steps.findLastIndex((entry) => entry.eventType === "log" && parseMetadataRecord(entry.metadataJson).automationTurnMarker === turnMarker);
+      if (promptIndex < 0) return [];
+      from = promptIndex + 1;
+    } else {
+      // The step started the run, so its turn is the first one.
+      from = steps.findIndex(startsTurn) + 1;
+    }
+    // A person may follow up on the run before the workflow reads it; that later turn's answer is not this step's.
+    const next = steps.findIndex((entry, index) => index >= from && startsTurn(entry));
+    return steps.slice(from, next < 0 ? undefined : next);
   }
 
   /** A turn that started after a person stopped the workflow is stopped too, instead of running unwatched. */

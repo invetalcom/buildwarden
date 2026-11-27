@@ -103,6 +103,9 @@ describe("automation agent steps", () => {
     expect(fixContext.state.checkReminded).toBe(true);
     expect(followUp).toHaveBeenCalledTimes(2);
     db.appendRunStep(run.id, "output", "Answer", "ANSWER: no", "{}");
+    // A person's later turn on the same run does not answer the step.
+    db.appendRunStep(run.id, "log", "Follow-up command", "Anything else?", JSON.stringify({ commandType: "follow-up", source: "user" }));
+    db.appendRunStep(run.id, "output", "Answer", "ANSWER: yes", "{}");
     await expect(steps.check(fixContext)).resolves.toEqual({ kind: "done", value: "no", note: "Is it fixed?" });
   });
 
