@@ -201,7 +201,8 @@ if (startedDirectly()) {
     process.exit(2);
   }
   runMcpStdioRelay({ url, headers: readHeaders(process.env[MCP_RELAY_HEADERS_ENV]) }).then(
-    () => process.exit(0),
+    // Exit only once stdout has passed on the last answers: a pipe may still hold them.
+    () => { process.stdout.write("", () => process.exit(0)); },
     (error: unknown) => {
       process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
       process.exit(1);
