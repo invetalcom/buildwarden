@@ -900,7 +900,7 @@ export class AcpHarnessAdapter implements HarnessAdapter {
         }
         onChunk({
           type: "error", title: "ACP agent",
-          value: "This agent offers no read-only mode. BuildWarden rejects edit and command permissions in this turn and stops it if the agent runs one anyway.",
+          value: "This agent offers no read-only mode. BuildWarden rejects edit permissions in this turn, lets commands run only as the shell policy and your approvals allow, and stops the turn if the agent acts without permission.",
         });
       }
       onChunk({
