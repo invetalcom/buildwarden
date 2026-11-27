@@ -348,6 +348,8 @@ export interface AutomationWorkflowStepState {
   polledAt: string | null;
   /** The agent was reminded once to answer its check. */
   checkReminded: boolean;
+  /** Marks the prompt of the turn this step sent to an existing run; only output after it answers the step. */
+  turnMarker?: string | null;
   question: AutomationQuestionState | null;
   error: string | null;
 }
@@ -420,7 +422,7 @@ export const AUTOMATION_WORKFLOW_RUN_STATUS_LABELS: Record<AutomationWorkflowRun
 
 export const createAutomationStepState = (stepId: string, kind: AutomationStepKind): AutomationWorkflowStepState => ({
   stepId, kind, status: "pending", value: null, note: null, runId: null, councilRoundId: null, prUrl: null,
-  startedAt: null, finishedAt: null, waitUntil: null, polledAt: null, checkReminded: false, question: null, error: null,
+  startedAt: null, finishedAt: null, waitUntil: null, polledAt: null, checkReminded: false, turnMarker: null, question: null, error: null,
 });
 
 /** The step to run at `index`, counting the prompt step as 0. */

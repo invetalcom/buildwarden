@@ -13,10 +13,11 @@ import {
   type RunFollowUpOptions,
   type RunRecord,
 } from "@buildwarden/shared";
+import { randomUUID } from "node:crypto";
 import { getHarnessTypeForProvider } from "../harness-adapters";
 import { AppService } from "./app-service";
 import { ACTIVE_RUN_STATUSES } from "./app-service-constants";
-import { latestRunAnswerText } from "./run-step-content";
+import { latestRunAnswerText, parseMetadataRecord } from "./run-step-content";
 
 /** The prompt step as the engine sees it: an agent step whose prompt is the automation's own. */
 type AutomationPromptStep = { id: typeof AUTOMATION_PROMPT_STEP_ID; kind: "agent"; when: null; check: string | null };
@@ -178,13 +179,15 @@ export class AutomationStepService extends AppService<
     if (previousRunId) {
       const previous = this.db.getRun(previousRunId);
       if (this.isRunBusy(previous) || !context.isActive()) return PENDING;
+      const turnMarker = randomUUID();
       await this.services.runTurns.followUpRunInternal(
         previousRunId,
         prompt,
         { mode: "code", modelId: automation.modelId, yoloMode, ...this.effortOptions(automation) },
-        { source: "automation", automationWorkflowRunId: workflow.id, automationStepIndex: index },
+        { source: "automation", automationWorkflowRunId: workflow.id, automationStepIndex: index, automationTurnMarker: turnMarker },
         { background: true },
       );
+      state.turnMarker = turnMarker;
       if (await this.stopIfWorkflowStopped(context, previousRunId)) return PENDING;
       state.runId = previousRunId;
       context.save();
@@ -249,21 +252,34 @@ export class AutomationStepService extends AppService<
       throw new Error(run.errorMessage?.trim() || (run.status === "cancelled" ? "The agent run was stopped." : "The agent run failed."));
     }
     if (!step.check) return done("done");
-    const answer = parseAutomationCheckAnswer(latestRunAnswerText(this.db.getRunSteps(run.id)));
+    const answer = parseAutomationCheckAnswer(latestRunAnswerText(this.currentTurnSteps(run.id, state.turnMarker ?? null)));
     if (answer) return done(answer, step.check);
     if (state.checkReminded) throw new Error("The agent did not answer the step's question with ANSWER: yes or ANSWER: no.");
     if (!context.isActive()) return WAITING;
+    const turnMarker = randomUUID();
     state.checkReminded = true;
+    state.turnMarker = turnMarker;
     context.save();
     await this.services.runTurns.followUpRunInternal(
       run.id,
       `Answer this question about your work with exactly one line, \`ANSWER: yes\` or \`ANSWER: no\`:\n${step.check}`,
       { mode: "ask", modelId: automation.modelId, yoloMode: false },
-      { source: "automation", automationWorkflowRunId: workflow.id, automationCheckReminder: true },
+      { source: "automation", automationWorkflowRunId: workflow.id, automationCheckReminder: true, automationTurnMarker: turnMarker },
       { background: true },
     );
     await this.stopIfWorkflowStopped(context, run.id);
     return WAITING;
+  }
+
+  /**
+   * The steps of the turn this step sent. A step that started the run reads the whole run; one that continued a
+   * run reads only what came after its prompt, so an earlier turn's answer never answers this step.
+   */
+  private currentTurnSteps(runId: string, turnMarker: string | null) {
+    const steps = this.db.getRunSteps(runId);
+    if (!turnMarker) return steps;
+    const promptIndex = steps.findLastIndex((entry) => entry.eventType === "log" && parseMetadataRecord(entry.metadataJson).automationTurnMarker === turnMarker);
+    return promptIndex < 0 ? [] : steps.slice(promptIndex + 1);
   }
 
   /** A turn that started after a person stopped the workflow is stopped too, instead of running unwatched. */

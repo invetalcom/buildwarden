@@ -53,7 +53,7 @@ const setup = async () => {
     workflow, state: workflow.steps[0]!, step: { id: "prompt", kind: "agent", when: null, check: null }, index: 0, automation,
     save: vi.fn(), isActive: () => active,
   };
-  return { steps, services, stepContext, stop: () => { active = false; } };
+  return { db, steps, services, stepContext, stop: () => { active = false; } };
 };
 
 describe("automation agent steps", () => {
@@ -76,6 +76,34 @@ describe("automation agent steps", () => {
     await expect(steps.begin(stepContext)).resolves.toEqual({ kind: "pending" });
     expect(services.runTurns.cancelRun).toHaveBeenCalledWith("late-run");
     expect(stepContext.state.runId).toBeNull();
+  });
+
+  it("reads a check's answer only from the turn the step sent", async () => {
+    const { steps, services, stepContext, db } = await setup();
+    const run = db.createRun({
+      projectId: stepContext.automation.projectId, providerAccountId: db.getModel(stepContext.automation.modelId).providerAccountId,
+      modelId: stepContext.automation.modelId, harnessType: "ai-sdk", mode: "code", workspaceType: "worktree", workspaceVcs: "git",
+      prompt: "Check", branchName: "b", worktreePath: "w", kind: "automation", automationId: stepContext.automation.id,
+    });
+    db.appendRunStep(run.id, "output", "Answer", "Found three.\nANSWER: yes", "{}");
+    db.updateRunStatus(run.id, "completed");
+    const followUp = vi.mocked(services.runTurns.followUpRunInternal);
+    // The follow-up writes its prompt step; this turn then ends without writing an answer.
+    followUp.mockImplementation(async (runId, _prompt, _options, metadata) => {
+      db.appendRunStep(runId, "log", "Follow-up", "Is it fixed?", JSON.stringify(metadata));
+      return db.getRun(runId);
+    });
+    stepContext.workflow.steps = [{ ...createAutomationStepState("prompt", "agent"), status: "done", runId: run.id }, createAutomationStepState("fix", "agent")];
+    const fixContext: AutomationStepContext = {
+      ...stepContext, state: stepContext.workflow.steps[1]!, index: 1,
+      step: { id: "fix", kind: "agent", when: null, prompt: "Fix it", workspace: "continue", check: "Is it fixed?" },
+    };
+    await expect(steps.begin(fixContext)).resolves.toEqual({ kind: "waiting" });
+    await expect(steps.check(fixContext)).resolves.toEqual({ kind: "waiting" });
+    expect(fixContext.state.checkReminded).toBe(true);
+    expect(followUp).toHaveBeenCalledTimes(2);
+    db.appendRunStep(run.id, "output", "Answer", "ANSWER: no", "{}");
+    await expect(steps.check(fixContext)).resolves.toEqual({ kind: "done", value: "no", note: "Is it fixed?" });
   });
 
   it("keeps shell approvals on for runs started by an issue", async () => {
