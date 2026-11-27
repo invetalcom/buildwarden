@@ -3,6 +3,14 @@ import { SERVICES_SCHEMA_SQL } from "./schema-services";
 import { SKILLS_SCHEMA_SQL } from "./schema-skills";
 import type { SkillPackageRecord, SkillSessionSnapshot } from "@buildwarden/shared";
 import { isAutomationScheduleKind, PROJECT_INSIGHT_KINDS, validateUserInputAnswers } from "@buildwarden/shared";
+import {
+  DEFAULT_AUTOMATION_TRIGGER,
+  EMPTY_AUTOMATION_WORKFLOW,
+  parseAutomationTrigger,
+  readStoredAutomationWorkflow,
+  type AutomationWorkflowRun,
+  type AutomationWorkflowRunStatus,
+} from "@buildwarden/shared";
 import { DEFAULT_RUN_SECTION_COLOR, isRunSectionColor, isRunSectionName, isUpdateRunOrganizationInput, RUN_TAG_COUNT_LIMIT, RUN_TAG_LIMIT, UNCATEGORIZED_RUN_SECTION_ID,
   type RunSectionRecord, type RunOrganizationRecord, type RunOrganizationSnapshot, type UpdateRunOrganizationInput } from "@buildwarden/shared";
 import { getResponseSourceText, type ChatSearchDetail } from "@buildwarden/shared";
@@ -179,7 +187,7 @@ const ORCHESTRATION_TASK_SELECT = `select id, orchestration_id as orchestrationI
 const ORCHESTRATION_EFFECT_SELECT = `select id, orchestration_id as orchestrationId, task_id as taskId, kind, status,
   payload_json as payloadJson, attempts, error_message as errorMessage, created_at as createdAt, updated_at as updatedAt
   from orchestration_effects`;
-const PROJECT_AUTOMATION_COLUMNS = `schedule_kind as scheduleKind, cron_expression as cronExpression, time_zone as timeZone, model_id as modelId, effort,
+const PROJECT_AUTOMATION_COLUMNS = `trigger_json as triggerJson, workflow_json as workflowJson, schedule_kind as scheduleKind, cron_expression as cronExpression, time_zone as timeZone, model_id as modelId, effort,
   execution_options_json as executionOptionsJson, workspace_type as workspaceType, base_branch as baseBranch,
   only_if_previous_finished as onlyIfPreviousFinished, enabled,
   last_scheduled_at as lastScheduledAt, next_run_at as nextRunAt, last_error as lastError,
@@ -199,13 +207,17 @@ type StoredProjectTaskRecord = Omit<ProjectTaskRecord, "attachments"> & {
   attachmentsJson: string;
 };
 
-type StoredProjectAutomationSummary = Omit<ProjectAutomationSummary, "executionOptions" | "scheduleKind"> & {
+type StoredProjectAutomationSummary = Omit<ProjectAutomationSummary, "executionOptions" | "scheduleKind" | "trigger" | "workflow"> & {
   executionOptionsJson: string;
   scheduleKind: string | null;
+  triggerJson: string | null;
+  workflowJson: string | null;
 };
 type StoredProjectAutomationRecord = Omit<StoredProjectAutomationSummary, "attachmentCount"> & { attachmentsJson: string };
 
 const DEFAULT_DB_NAME = "buildwarden.sqlite";
+/** Workflow runs each automation shows in the project snapshot. */
+const AUTOMATION_WORKFLOW_RUNS_IN_LIST = 20;
 /** 2: large attachments live in the database's attachment store instead of step metadata. */
 export const BUILDWARDEN_DATABASE_SCHEMA_VERSION = 2;
 const WAL_SIZE_LIMIT_BYTES = 64 * 1024 * 1024;
@@ -1815,13 +1827,15 @@ export class BuildWardenDatabase {
       `insert into project_automations (
         id, project_id, name, prompt, attachments_json, schedule_kind, cron_expression, time_zone, model_id, effort,
         execution_options_json, workspace_type, base_branch, only_if_previous_finished, enabled, last_scheduled_at, next_run_at,
-        last_error, created_at, updated_at
-      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, null, ?, null, ?, ?)`,
+        last_error, trigger_json, workflow_json, created_at, updated_at
+      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, null, ?, null, ?, ?, ?, ?)`,
       [
         id, projectId, input.name.trim(), input.prompt.trim(), JSON.stringify(input.attachments ?? []),
         input.scheduleKind ?? "cron", input.cronExpression.trim(), timeZone, input.modelId, input.effort?.trim() || "auto",
         JSON.stringify(input.executionOptions ?? {}), input.workspaceType, input.baseBranch?.trim() || null,
-        Number(input.onlyIfPreviousFinished !== false), Number(input.enabled !== false), nextRunAt, createdAt, createdAt,
+        Number(input.onlyIfPreviousFinished !== false), Number(input.enabled !== false), nextRunAt,
+        JSON.stringify(input.trigger ?? DEFAULT_AUTOMATION_TRIGGER), JSON.stringify(input.workflow ?? EMPTY_AUTOMATION_WORKFLOW),
+        createdAt, createdAt,
       ],
     );
     return this.getProjectAutomation(id);
@@ -1851,7 +1865,11 @@ export class BuildWardenDatabase {
       [projectId],
     ).map((stored) => {
       const automation = this.hydrateProjectAutomationOptions(stored);
-      return { automation, runs: runs.filter((run) => run.automationId === automation.id) };
+      return {
+        automation,
+        runs: runs.filter((run) => run.automationId === automation.id),
+        workflowRuns: this.listAutomationWorkflowRuns({ automationId: automation.id, limit: AUTOMATION_WORKFLOW_RUNS_IN_LIST }),
+      };
     });
   }
 
@@ -1864,7 +1882,7 @@ export class BuildWardenDatabase {
     this.run(
       `update project_automations set name = ?, prompt = ?, attachments_json = ?, schedule_kind = ?, cron_expression = ?, time_zone = ?,
         model_id = ?, effort = ?, execution_options_json = ?, workspace_type = ?, base_branch = ?,
-        only_if_previous_finished = ?, enabled = ?,
+        only_if_previous_finished = ?, enabled = ?, trigger_json = ?, workflow_json = ?,
         last_scheduled_at = ?, next_run_at = ?, last_error = null, updated_at = ? where id = ?`,
       [
         input.name?.trim() ?? existing.name,
@@ -1880,6 +1898,8 @@ export class BuildWardenDatabase {
         input.baseBranch === undefined ? existing.baseBranch : input.baseBranch?.trim() || null,
         Number(input.onlyIfPreviousFinished ?? Boolean(existing.onlyIfPreviousFinished)),
         Number(input.enabled ?? Boolean(existing.enabled)),
+        JSON.stringify(input.trigger ?? existing.trigger),
+        JSON.stringify(input.workflow ?? existing.workflow),
         lastScheduledAt,
         nextRunAt ?? existing.nextRunAt,
         updatedAt,
@@ -1912,7 +1932,57 @@ export class BuildWardenDatabase {
   }
 
   deleteProjectAutomation(automationId: string): void {
-    this.run("delete from project_automations where id = ?", [automationId]);
+    this.transaction(() => {
+      this.run("delete from automation_workflow_runs where automation_id = ?", [automationId]);
+      this.run("delete from project_automations where id = ?", [automationId]);
+    });
+  }
+
+  /** What a trigger remembers between checks, such as the issues it already started. */
+  getProjectAutomationTriggerState(automationId: string): string | null {
+    return this.first<{ state: string | null }>("select trigger_state_json as state from project_automations where id = ?", [automationId])?.state ?? null;
+  }
+
+  setProjectAutomationTriggerState(automationId: string, state: string | null): void {
+    this.run("update project_automations set trigger_state_json = ? where id = ?", [state, automationId]);
+  }
+
+  saveAutomationWorkflowRun(record: AutomationWorkflowRun): void {
+    this.run(
+      `insert into automation_workflow_runs (id, automation_id, project_id, status, created_at, updated_at, record_json) values (?, ?, ?, ?, ?, ?, ?)
+       on conflict(id) do update set status = excluded.status, updated_at = excluded.updated_at, record_json = excluded.record_json`,
+      [record.id, record.automationId, record.projectId, record.status, record.createdAt, record.updatedAt, JSON.stringify(record)],
+    );
+  }
+
+  getAutomationWorkflowRun(workflowRunId: string): AutomationWorkflowRun {
+    const row = this.first<{ recordJson: string }>("select record_json as recordJson from automation_workflow_runs where id = ?", [workflowRunId]);
+    if (!row) throw new Error("Automation workflow run not found.");
+    return JSON.parse(row.recordJson) as AutomationWorkflowRun;
+  }
+
+  /** Newest first. */
+  listAutomationWorkflowRuns(filter: {
+    automationId?: string;
+    projectId?: string;
+    statuses?: readonly AutomationWorkflowRunStatus[];
+    limit?: number;
+  } = {}): AutomationWorkflowRun[] {
+    const clauses: string[] = [];
+    const params: (string | number)[] = [];
+    if (filter.automationId) { clauses.push("automation_id = ?"); params.push(filter.automationId); }
+    if (filter.projectId) { clauses.push("project_id = ?"); params.push(filter.projectId); }
+    if (filter.statuses) {
+      if (!filter.statuses.length) return [];
+      clauses.push(`status in (${filter.statuses.map(() => "?").join(",")})`);
+      params.push(...filter.statuses);
+    }
+    const where = clauses.length ? `where ${clauses.join(" and ")}` : "";
+    const limit = filter.limit ? `limit ${String(Math.max(1, Math.floor(filter.limit)))}` : "";
+    return this.all<{ recordJson: string }>(
+      `select record_json as recordJson from automation_workflow_runs ${where} order by created_at desc, id desc ${limit}`,
+      params,
+    ).map((row) => JSON.parse(row.recordJson) as AutomationWorkflowRun);
   }
 
   linkProjectTaskToRun(taskId: string, runId: string): ProjectTaskRecord {
@@ -2304,6 +2374,8 @@ export class BuildWardenDatabase {
       ui_change_policy as uiChangePolicy,
       pr_review_policy as prReviewPolicy,
       ui_review_instructions as uiReviewInstructions,
+      council_before_pr as councilBeforePr,
+      verify_before_pr as verifyBeforePr,
       base_branch as baseBranch,
       status,
       plan_summary as planSummary,
@@ -2362,6 +2434,8 @@ export class BuildWardenDatabase {
     uiChangePolicy: ProjectLoopUiChangePolicy;
     prReviewPolicy?: ProjectLoopPrReviewPolicy;
     uiReviewInstructions?: string | null;
+    councilBeforePr?: boolean;
+    verifyBeforePr?: boolean;
     baseBranch: string;
     status: ProjectLoopStatus;
   }): ProjectLoopRecord {
@@ -2371,8 +2445,9 @@ export class BuildWardenDatabase {
       `
       insert into project_loops (
         id, project_id, name, prompt, runner_model_id, review_model_id, merge_policy, ui_change_policy, pr_review_policy,
-        ui_review_instructions, base_branch, status, plan_summary, error_message, created_at, updated_at, started_at, finished_at
-      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, null, null, ?, ?, ?, null)
+        ui_review_instructions, council_before_pr, verify_before_pr, base_branch, status, plan_summary, error_message,
+        created_at, updated_at, started_at, finished_at
+      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, null, null, ?, ?, ?, null)
       `,
       [
         id,
@@ -2385,6 +2460,8 @@ export class BuildWardenDatabase {
         input.uiChangePolicy,
         input.prReviewPolicy ?? "none",
         input.uiReviewInstructions ?? null,
+        Number(input.councilBeforePr === true),
+        Number(input.verifyBeforePr === true),
         input.baseBranch,
         input.status,
         timestamp,
@@ -3360,6 +3437,7 @@ export class BuildWardenDatabase {
       this.derivedRunStateCache.delete(runId);
     }
 
+    this.run("delete from automation_workflow_runs where project_id = ?", [projectId]);
     this.run("delete from project_automations where project_id = ?", [projectId]);
     this.run("delete from run_forge_links where run_id in (select id from runs where project_id = ?)", [projectId]);
     this.run("delete from run_pr_watches where project_id = ?", [projectId]);
@@ -6797,6 +6875,8 @@ export class BuildWardenDatabase {
       );
     `);
     this.ensureColumn("project_loops", "pr_review_policy", "text not null default 'none'");
+    this.ensureColumn("project_loops", "council_before_pr", "integer not null default 0");
+    this.ensureColumn("project_loops", "verify_before_pr", "integer not null default 0");
     this.ensureColumn("project_loop_iterations", "ai_review_posted", "integer not null default 0");
     this.ensureColumn("chats", "run_id", "text");
     // Only after run_id exists: chats tables from before run-scoped chats lack it.
@@ -6858,6 +6938,9 @@ export class BuildWardenDatabase {
     this.ensureColumn("project_automations", "execution_options_json", "text not null default '{}'");
     this.ensureColumn("project_automations", "base_branch", "text");
     this.ensureColumn("project_automations", "schedule_kind", "text not null default 'cron'");
+    this.ensureColumn("project_automations", "trigger_json", "text not null default '{\"kind\":\"schedule\"}'");
+    this.ensureColumn("project_automations", "workflow_json", "text not null default ''");
+    this.ensureColumn("project_automations", "trigger_state_json", "text");
     this.run(
       `update project_automations
        set base_branch = (select project.default_branch from projects project where project.id = project_automations.project_id)
@@ -7171,13 +7254,20 @@ export class BuildWardenDatabase {
 
   private hydrateProjectAutomationOptions<T extends Omit<StoredProjectAutomationRecord, "attachmentsJson">>(
     automation: T,
-  ): Omit<T, "executionOptionsJson" | "scheduleKind"> & Pick<ProjectAutomationRecord, "executionOptions" | "scheduleKind"> {
-    const { executionOptionsJson, scheduleKind, ...record } = automation;
+  ): Omit<T, "executionOptionsJson" | "scheduleKind" | "triggerJson" | "workflowJson">
+    & Pick<ProjectAutomationRecord, "executionOptions" | "scheduleKind" | "trigger" | "workflow"> {
+    const { executionOptionsJson, scheduleKind, triggerJson, workflowJson, ...record } = automation;
     const parsedExecutionOptions = this.parseJsonValue<unknown>(executionOptionsJson);
     const executionOptions = parsedExecutionOptions && typeof parsedExecutionOptions === "object" && !Array.isArray(parsedExecutionOptions)
       ? parsedExecutionOptions as ProviderExecutionOptions
       : {};
-    return { ...record, scheduleKind: isAutomationScheduleKind(scheduleKind) ? scheduleKind : "cron", executionOptions };
+    return {
+      ...record,
+      scheduleKind: isAutomationScheduleKind(scheduleKind) ? scheduleKind : "cron",
+      executionOptions,
+      trigger: parseAutomationTrigger(triggerJson),
+      workflow: readStoredAutomationWorkflow(workflowJson),
+    };
   }
 
   private parseRemoteAccessScopes(value: string): RemoteAccessScope[] {

@@ -12,6 +12,7 @@ import { Select } from "../ui/select";
 import { formatRunRelativeTime } from "./run-summary-format";
 import { SidebarUtilityButton } from "./SidebarUtilityButton";
 import { InstanceBadge, useInstanceContext } from "../../lib/instance-context";
+import { AutomationQuestionActions } from "./AutomationQuestionActions";
 
 // Theme tokens only, so every design scheme and light/dark mode colors the rows consistently.
 const KIND_STYLES: Record<AttentionKind, { icon: LucideIcon; tile: string; text: string }> = {
@@ -58,7 +59,7 @@ export const AttentionInbox = ({ client, onOpenRun, compact = false, triggerVari
     let timer: ReturnType<typeof setTimeout> | undefined;
     const schedule = () => { timer ??= setTimeout(() => { timer = undefined; void refresh(); }, 1_000); };
     void refresh();
-    const subscriptions = [client.onRunEvent((event) => { if (["status", "error", "approval-requested", "approval-resolved", "user-input-requested", "user-input-resolved"].includes(event.type)) schedule(); }), client.onOrchestrationChanged(schedule), client.onRunForgeRequestChanged(schedule), client.onProviderCliUpdatesChanged(schedule)];
+    const subscriptions = [client.onRunEvent((event) => { if (["status", "error", "approval-requested", "approval-resolved", "user-input-requested", "user-input-resolved"].includes(event.type)) schedule(); }), client.onOrchestrationChanged(schedule), client.onRunForgeRequestChanged(schedule), client.onProviderCliUpdatesChanged(schedule), client.onAutomationWorkflowChanged(schedule)];
     const interval = setInterval(() => { if (!document.hidden) void refresh(); }, 30_000);
     const focus = () => { if (!document.hidden) void refresh(); };
     document.addEventListener("visibilitychange", focus);
@@ -202,9 +203,15 @@ export const AttentionInbox = ({ client, onOpenRun, compact = false, triggerVari
           const dismissLabel = item.providerUpdate ? "Dismiss" : "Mark as read";
           return <div key={item.id} className="flex items-start gap-2.5 rounded-lg px-2 py-2 transition-colors hover:bg-[var(--ec-hover)]">
             <span aria-hidden className={cn("mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-md", style.tile)}><KindIcon className="size-3.5" /></span>
-            {item.runId ? <button type="button" disabled={pendingId !== null} title={item.dismissible && canAcknowledge(item) ? "Open run and mark as read" : "Open run"} className="flex min-w-0 flex-1 flex-col gap-0.5 rounded-sm text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ec-ring)] disabled:opacity-60" onClick={() => void openItem(item)}>
-              {body}
-            </button> : <div className="flex min-w-0 flex-1 flex-col gap-0.5">{body}</div>}
+            <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+              {item.runId ? <button type="button" disabled={pendingId !== null} title={item.dismissible && canAcknowledge(item) ? "Open run and mark as read" : "Open run"} className="flex min-w-0 flex-col gap-0.5 rounded-sm text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ec-ring)] disabled:opacity-60" onClick={() => void openItem(item)}>
+                {body}
+              </button> : <div className="flex min-w-0 flex-col gap-0.5">{body}</div>}
+              {item.automationQuestion ? (
+                <AutomationQuestionActions question={item.automationQuestion} client={instances?.clientForEntity(item.id) ?? client} disabled={pendingId !== null}
+                  onAnswered={async (failure) => { await refresh(); if (failure) setError(failure); }} />
+              ) : null}
+            </div>
             <div className="flex shrink-0 items-center gap-1 self-center">
               {item.providerUpdate?.canAutoUpdate && canRunProviderUpdates(item) && <Button size="xs" disabled={pendingId !== null || item.providerUpdate.inUse} title={item.providerUpdate.inUse ? "In use by an active run or chat. Update once they finish." : undefined} onClick={() => void updateProvider(item)} className="h-7 px-2 text-[11px]">{pendingId === item.id ? "Updating…" : "Update"}</Button>}
               {item.dismissible && canAcknowledge(item) && <Button size="icon" variant="secondary" disabled={pendingId !== null} onClick={() => void dismiss(item)} aria-label={dismissLabel} title={dismissLabel}

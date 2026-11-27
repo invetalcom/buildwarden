@@ -1,5 +1,10 @@
 import {
+  AUTOMATION_TRIGGER_LABELS,
+  DEFAULT_AUTOMATION_TRIGGER,
+  EMPTY_AUTOMATION_WORKFLOW,
   formatAutomationLocalDateTime,
+  type AutomationTrigger,
+  type AutomationWorkflowDefinition,
   type ChatAttachmentPayload,
   type ProjectAutomationInput,
   type ProjectAutomationListItem,
@@ -28,6 +33,9 @@ import {
   type AutomationModelOption,
 } from "./automation-model-effort";
 import { AutomationScheduleFields, type AutomationScheduleDraft } from "./AutomationScheduleFields";
+import { AutomationStepsEditor } from "./AutomationStepsEditor";
+import { AutomationTriggerFields } from "./AutomationTriggerFields";
+import { AutomationWorkflowRuns } from "./AutomationWorkflowRuns";
 import {
   formatScheduleMoment,
   formatTimeUntil,
@@ -59,6 +67,21 @@ type EditorDraft = AutomationScheduleDraft & {
   baseBranch: string;
   onlyIfPreviousFinished: boolean;
   enabled: boolean;
+  trigger: AutomationTrigger;
+  workflow: AutomationWorkflowDefinition;
+};
+
+/** Hosts from before workflows send automations without these fields. */
+const triggerOf = (record: Pick<ProjectAutomationRecord, "trigger">): AutomationTrigger => record.trigger ?? DEFAULT_AUTOMATION_TRIGGER;
+
+const describeTrigger = (trigger: AutomationTrigger, automations: ProjectAutomationListItem[]): string => {
+  if (trigger.kind === "issue-labelled") return `Issue labelled "${trigger.label}"`;
+  if (trigger.kind === "pr-opened") return trigger.targetBranch ? `Pull request into ${trigger.targetBranch}` : "Pull request opened";
+  if (trigger.kind === "automation-finished") {
+    const upstream = automations.find((item) => item.automation.id === trigger.automationId)?.automation.name ?? "another automation";
+    return `After ${upstream}`;
+  }
+  return AUTOMATION_TRIGGER_LABELS[trigger.kind];
 };
 
 const DEFAULT_CRON_EXPRESSION = "0 9 * * 1-5";
@@ -82,6 +105,8 @@ const emptyDraft = (
   baseBranch: projectKind === "git" ? projectBaseBranch : "",
   onlyIfPreviousFinished: true,
   enabled: true,
+  trigger: DEFAULT_AUTOMATION_TRIGGER,
+  workflow: EMPTY_AUTOMATION_WORKFLOW,
 });
 
 const storedRunAtLocal = (record: Pick<ProjectAutomationRecord, "nextRunAt" | "timeZone">): string => {
@@ -105,6 +130,8 @@ const recordToDraft = (record: ProjectAutomationRecord, projectBaseBranch: strin
   baseBranch: record.baseBranch ?? projectBaseBranch,
   onlyIfPreviousFinished: Boolean(record.onlyIfPreviousFinished),
   enabled: Boolean(record.enabled),
+  trigger: triggerOf(record),
+  workflow: record.workflow ?? EMPTY_AUTOMATION_WORKFLOW,
 });
 
 const durationMs = (run: RunListItem) => {
@@ -165,7 +192,13 @@ export const ProjectAutomationsPage = ({
   const now = useScheduleClock();
 
   const selectedItem = automations.find((item) => item.automation.id === selectedId) ?? null;
-  const selectedOneTimeState = selectedItem?.automation.scheduleKind === "once"
+  const selectedTrigger = selectedItem ? triggerOf(selectedItem.automation) : DEFAULT_AUTOMATION_TRIGGER;
+  const draftScheduled = draft.trigger.kind === "schedule";
+  const otherAutomations = automations
+    // An automation being edited cannot follow itself.
+    .filter((item) => !(editing && item.automation.id === selectedId))
+    .map((item) => ({ id: item.automation.id, name: item.automation.name }));
+  const selectedOneTimeState = selectedTrigger.kind === "schedule" && selectedItem?.automation.scheduleKind === "once"
     ? oneTimeAutomationState(selectedItem.automation, selectedItem.runs)
     : null;
   const selectedOneTimeMoment = selectedItem && selectedOneTimeState
@@ -332,7 +365,7 @@ export const ProjectAutomationsPage = ({
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
             <h2 className="flex items-center gap-2 text-base font-semibold text-[var(--ec-text)]"><CalendarClock className="size-4 text-[var(--ec-accent)]" />Automations</h2>
-            <p className="mt-0.5 text-xs text-[var(--ec-muted)]">Run saved prompts on a repeating schedule or once at a set time. Times use each automation’s configured time zone.</p>
+            <p className="mt-0.5 text-xs text-[var(--ec-muted)]">Run saved prompts on a schedule, by hand, or when an issue, pull request or other automation starts them. Later steps can ask you, review and open pull requests.</p>
           </div>
           {canManage ? <Button type="button" size="sm" onClick={startNew}><Plus className="size-3.5" />New automation</Button> : (
             <Badge tone="neutral" className="px-2 py-1 text-[10px]">Read only</Badge>
@@ -367,7 +400,8 @@ export const ProjectAutomationsPage = ({
               <div className="divide-y divide-[var(--ec-border)]">
                 {automations.map((item) => {
                   const { automation } = item;
-                  const oneTimeState = automation.scheduleKind === "once" ? oneTimeAutomationState(automation, item.runs) : null;
+                  const trigger = triggerOf(automation);
+                  const oneTimeState = trigger.kind === "schedule" && automation.scheduleKind === "once" ? oneTimeAutomationState(automation, item.runs) : null;
                   const presentation = oneTimeState ? ONE_TIME_STATE_PRESENTATION[oneTimeState] : null;
                   const ScheduleIcon = oneTimeState ? CalendarClock : Repeat;
                   return (
@@ -384,12 +418,15 @@ export const ProjectAutomationsPage = ({
                             {oneTimeState === "scheduled" ? <span className="truncate">Starts {formatTimeUntil(automation.nextRunAt, now)}</span> : <Badge tone={presentation.tone} className="px-1.5 py-0 text-[10px]">{presentation.label}</Badge>}
                           </p>
                         </>
+                      ) : trigger.kind !== "schedule" ? (
+                        <p className="mt-1 truncate text-[10px] text-[var(--ec-muted)]">{describeTrigger(trigger, automations)}</p>
                       ) : (
                         <>
                           <p className="mt-1 truncate font-mono text-[10px] text-[var(--ec-muted)]">{automation.cronExpression}</p>
                           <p className="mt-1 text-[10px] text-[var(--ec-faint)]">Next {formatScheduledTime(automation.nextRunAt, automation.timeZone)}</p>
                         </>
                       )}
+                      {(automation.workflow?.steps.length ?? 0) > 0 ? <p className="mt-1 text-[10px] text-[var(--ec-faint)]">{(automation.workflow?.steps.length ?? 0) + 1} steps</p> : null}
                     </button>
                   );
                 })}
@@ -411,21 +448,24 @@ export const ProjectAutomationsPage = ({
                   {storedAttachments.length > 0 ? <><StoredChatAttachments attachments={storedAttachments} compact /><Button type="button" size="sm" variant="ghost" className="mt-1 h-7 text-[11px]" onClick={() => setStoredAttachments([])}>Remove saved attachments</Button></> : null}
                   <ChatAttachmentPicker files={newFiles} onChange={setNewFiles} disabled={busy} />
                 </div>
-                <AutomationScheduleFields value={draft} onChange={updateDraftSchedule} now={now} />
+                <AutomationTriggerFields value={draft.trigger} onChange={(trigger) => setDraft({ ...draft, trigger })} projectKind={projectKind}
+                  otherAutomations={otherAutomations} branches={branchOptions.map((option) => option.value)} />
+                {draftScheduled ? <AutomationScheduleFields value={draft} onChange={updateDraftSchedule} now={now} /> : null}
                 {effortControl ? <label className="text-xs text-[var(--ec-muted)]">{effortControl.label}<Select className="mt-1" value={draft.effort} options={effortControl.options} onValueChange={(effort) => setDraft({ ...draft, effort })} /></label> : null}
                 <div className="text-xs text-[var(--ec-muted)]">Workspace<div className="mt-1 flex h-9 items-center rounded-md border border-[var(--ec-border)] bg-[var(--ec-panel)] px-3 text-xs font-medium text-[var(--ec-text)]">{projectKind === "git" ? "Isolated worktree" : "Isolated folder copy"}</div></div>
                 {projectKind === "git" ? <label className="text-xs text-[var(--ec-muted)]">Worktree source branch<Select ariaLabel="Automation branch" className="mt-1" value={draft.baseBranch} options={branchOptions} onValueChange={(baseBranch) => setDraft({ ...draft, baseBranch })} searchable /></label> : null}
+                <AutomationStepsEditor value={draft.workflow} onChange={(workflow) => setDraft({ ...draft, workflow })} projectKind={projectKind} />
               </div>
               <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                <label className="flex items-center justify-between rounded-md border border-[var(--ec-border)] p-2 text-xs text-[var(--ec-text)]"><span><span className="block font-medium">Enabled</span><span className="text-[10px] text-[var(--ec-muted)]">{draft.scheduleKind === "once" ? "Allow the scheduled start" : "Allow scheduled starts"}</span></span><Switch checked={draft.enabled} onCheckedChange={(enabled) => setDraft({ ...draft, enabled })} /></label>
-                {draft.scheduleKind === "cron" ? (
+                <label className="flex items-center justify-between rounded-md border border-[var(--ec-border)] p-2 text-xs text-[var(--ec-text)]"><span><span className="block font-medium">Enabled</span><span className="text-[10px] text-[var(--ec-muted)]">{!draftScheduled ? "Allow automatic starts" : draft.scheduleKind === "once" ? "Allow the scheduled start" : "Allow scheduled starts"}</span></span><Switch checked={draft.enabled} onCheckedChange={(enabled) => setDraft({ ...draft, enabled })} /></label>
+                {(draftScheduled && draft.scheduleKind === "cron") || draft.trigger.kind === "automation-finished" ? (
                   <label className="flex items-center justify-between rounded-md border border-[var(--ec-border)] p-2 text-xs text-[var(--ec-text)]"><span><span className="block font-medium">Wait for previous run</span><span className="text-[10px] text-[var(--ec-muted)]">Skip an occurrence while active</span></span><Switch checked={draft.onlyIfPreviousFinished} onCheckedChange={(onlyIfPreviousFinished) => setDraft({ ...draft, onlyIfPreviousFinished })} /></label>
-                ) : (
+                ) : draftScheduled ? (
                   <p className="flex items-center rounded-md border border-dashed border-[var(--ec-border)] p-2 text-[10px] leading-4 text-[var(--ec-muted)]">Starts once at the chosen time, even if an earlier run is still active, then switches itself off.</p>
-                )}
+                ) : null}
               </div>
               {error ? <p className="mt-3 text-xs text-[var(--ec-danger)]">{error}</p> : null}
-              <div className="mt-4 flex justify-end"><Button type="button" size="sm" disabled={busy || modelOptions.length === 0 || (projectKind === "git" && !draft.baseBranch) || (draft.scheduleKind === "once" && !draft.runAtLocal)} onClick={() => void save()}>{busy ? <Spinner className="size-3.5" /> : <Zap className="size-3.5" />}{busy ? "Saving…" : "Save automation"}</Button></div>
+              <div className="mt-4 flex justify-end"><Button type="button" size="sm" disabled={busy || modelOptions.length === 0 || (projectKind === "git" && !draft.baseBranch) || (draftScheduled && draft.scheduleKind === "once" && !draft.runAtLocal)} onClick={() => void save()}>{busy ? <Spinner className="size-3.5" /> : <Zap className="size-3.5" />}{busy ? "Saving…" : "Save automation"}</Button></div>
             </Card>
           ) : selectedItem ? (
             <Card className="min-w-0 p-0">
@@ -443,8 +483,8 @@ export const ProjectAutomationsPage = ({
                 </div>
                 {canManage ? (
                   <div className="flex flex-wrap justify-end gap-1">
-                    {selectedOneTimeState === null ? (
-                      <Button type="button" size="sm" variant="secondary" disabled={busy} onClick={() => void toggleEnabled()}>{selectedItem.automation.enabled ? <Pause className="size-3.5" /> : <Play className="size-3.5" />}{selectedItem.automation.enabled ? "Pause schedule" : "Resume schedule"}</Button>
+                    {selectedTrigger.kind === "manual" ? null : selectedOneTimeState === null ? (
+                      <Button type="button" size="sm" variant="secondary" disabled={busy} onClick={() => void toggleEnabled()}>{selectedItem.automation.enabled ? <Pause className="size-3.5" /> : <Play className="size-3.5" />}{selectedItem.automation.enabled ? (selectedTrigger.kind === "schedule" ? "Pause schedule" : "Pause") : (selectedTrigger.kind === "schedule" ? "Resume schedule" : "Resume")}</Button>
                     ) : selectedOneTimeState === "scheduled" ? (
                       <Button type="button" size="sm" variant="secondary" disabled={busy} onClick={() => void toggleEnabled()}><CalendarX2 className="size-3.5" />Cancel schedule</Button>
                     ) : (
@@ -458,8 +498,13 @@ export const ProjectAutomationsPage = ({
               </div>
               <div className={`grid gap-px border-b border-[var(--ec-border)] bg-[var(--ec-border)] ${projectKind === "git" ? "sm:grid-cols-5" : "sm:grid-cols-4"}`}>
                 {[
-                  { label: "Schedule", value: selectedOneTimeState ? "One time" : selectedItem.automation.cronExpression },
-                  { label: selectedOneTimeMoment?.label ?? "Next run", value: formatScheduledTime(selectedOneTimeMoment?.value ?? selectedItem.automation.nextRunAt, selectedItem.automation.timeZone) },
+                  ...(selectedTrigger.kind === "schedule" ? [
+                    { label: "Schedule", value: selectedOneTimeState ? "One time" : selectedItem.automation.cronExpression },
+                    { label: selectedOneTimeMoment?.label ?? "Next run", value: formatScheduledTime(selectedOneTimeMoment?.value ?? selectedItem.automation.nextRunAt, selectedItem.automation.timeZone) },
+                  ] : [
+                    { label: "Starts", value: describeTrigger(selectedTrigger, automations) },
+                    { label: "Steps", value: String((selectedItem.automation.workflow?.steps.length ?? 0) + 1) },
+                  ]),
                   { label: "Workspace", value: projectKind === "git" ? "Isolated worktree" : "Isolated folder copy" },
                   ...(projectKind === "git" ? [{ label: "Branch", value: selectedItem.automation.baseBranch ?? projectBaseBranch }] : []),
                   { label: "Runs", value: String(selectedItem.runs.length) },
@@ -467,6 +512,7 @@ export const ProjectAutomationsPage = ({
               </div>
               {selectedItem.automation.lastError ? <p className="m-3 rounded-md bg-[var(--ec-danger-soft)] p-2 text-xs text-[var(--ec-danger)]">{selectedOneTimeState ? "The scheduled start failed" : "Last start failed"}: {selectedItem.automation.lastError}</p> : null}
               {selectedOneTimeState === "missed" ? <p className="m-3 rounded-md bg-[var(--ec-warning-soft)] p-2 text-xs text-[var(--ec-warning)]">This was due {formatScheduleMoment(selectedItem.automation.nextRunAt, selectedItem.automation.timeZone)} while BuildWarden was closed and was skipped when the app started. Reschedule it or run it now.</p> : null}
+              <AutomationWorkflowRuns workflowRuns={selectedItem.workflowRuns ?? []} onOpenRun={onOpenRun} onChanged={onChanged} />
               <div className="p-3"><h4 className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-[var(--ec-text)]"><Clock3 className="size-3.5" />Run history</h4>{selectedItem.runs.length === 0 ? <p className="rounded-md border border-dashed border-[var(--ec-border)] p-6 text-center text-xs text-[var(--ec-muted)]">{selectedOneTimeState === "scheduled" ? `This automation has not run yet. It starts ${formatTimeUntil(selectedItem.automation.nextRunAt, now)}.` : selectedOneTimeState === "cancelled" ? "This one-time automation is not scheduled. Reschedule it to choose a new start." : "This automation has not run yet."}</p> : <div className="divide-y divide-[var(--ec-border)] overflow-hidden rounded-md border border-[var(--ec-border)]">{selectedItem.runs.map((run) => <button key={run.id} type="button" className="flex w-full items-center gap-3 p-2.5 text-left hover:bg-[var(--ec-hover)]" onClick={() => onOpenRun(run.id)}><Bot className="size-4 shrink-0 text-[var(--ec-accent)]" /><div className="min-w-0 flex-1"><div className="flex items-center gap-2"><Badge tone={statusTone(run.status)} dot className="px-2 py-0.5 text-[10px]">{run.status}</Badge><span className="truncate text-[11px] text-[var(--ec-muted)]">{formatRunRelativeTime(run.createdAt)}</span></div><p className="mt-1 truncate text-[10px] text-[var(--ec-faint)]">{formatRunDuration(run)} · {(run.inputTokens + run.outputTokens).toLocaleString()} tokens · {run.branchName}</p></div><ExternalLink className="size-3.5 shrink-0 text-[var(--ec-faint)]" /></button>)}</div>}</div>
               {error ? <p className="px-3 pb-3 text-xs text-[var(--ec-danger)]">{error}</p> : null}
             </Card>

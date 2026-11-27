@@ -4,6 +4,7 @@ import {
   type AssistProjectForgeIssueInput,
   buildForgeIssueContextAttachment,
   buildForgeIssueRunPrompt,
+  type ChatAttachmentPayload,
   type CommentProjectForgeIssueInput,
   type CreateProjectForgeIssueInput,
   descriptionClosesForgeIssue,
@@ -276,6 +277,26 @@ export class ForgeIssueActions extends AppService<"activeWorkers" | "forgeReques
 
   private readonly forgeIssueAutomationCheckedAt = new Map<string, number>();
   private forgeIssueAutomationTickActive = false;
+
+  /** The issue an automation was started for, as the prompt step's agent receives it. */
+  async prepareForgeIssueAutomationContext(projectId: string, issueNumber: number): Promise<{
+    prompt: string;
+    attachment: ChatAttachmentPayload;
+    reference: ForgeIssueReference;
+  }> {
+    const { thread, context } = await this.forgeIssues.getIssueThread(projectId, issueNumber, true);
+    return {
+      prompt: buildForgeIssueRunPrompt(thread.issue, "implement"),
+      attachment: buildForgeIssueContextAttachment({
+        repoLabel: context.repoLabel,
+        issue: thread.issue,
+        timeline: thread.timeline,
+        linkedRequests: thread.linkedRequests,
+        subIssues: thread.subIssues,
+      }),
+      reference: { projectId, provider: thread.issue.provider, number: thread.issue.number, url: thread.issue.url, title: thread.issue.title },
+    };
+  }
 
   /**
    * Starts a run for each open issue that carries a project's trigger label and has no run yet.

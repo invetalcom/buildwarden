@@ -47,6 +47,8 @@ const automation: ProjectAutomationRecord = {
   lastScheduledAt: null,
   nextRunAt: "2026-08-27T01:00:00.000Z",
   lastError: null,
+  trigger: { kind: "schedule" },
+  workflow: { check: null, steps: [] },
   createdAt: "2026-08-26T00:00:00.000Z",
   updatedAt: "2026-08-26T00:00:00.000Z",
 };
@@ -70,7 +72,7 @@ const project = {
   activeRuns: [],
   recentRuns: [],
   tasks: [],
-  automations: [{ automation: { ...automation, attachments: undefined, attachmentCount: 0 }, runs: [] }],
+  automations: [{ automation: { ...automation, attachments: undefined, attachmentCount: 0 }, runs: [], workflowRuns: [] }],
   insights: [],
   labThreads: [],
   loops: [],
@@ -159,7 +161,7 @@ describe("ProjectAutomationsPanel", () => {
       } as unknown as MobileAppValue;
       const oneTimeProject = {
         ...project,
-        automations: [{ automation: { ...missed, attachments: undefined, attachmentCount: 0 }, runs: [] }],
+        automations: [{ automation: { ...missed, attachments: undefined, attachmentCount: 0 }, runs: [], workflowRuns: [] }],
       } as unknown as AppSnapshot["projects"][number];
       const container = document.createElement("div");
       document.body.append(container);

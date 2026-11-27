@@ -1,4 +1,5 @@
 import type { ProviderType } from "./index";
+import type { AutomationQuestionAttention } from "./automation-workflow";
 
 export type AttentionKind = "approval" | "input" | "failed" | "blocked" | "review" | "update";
 
@@ -51,6 +52,8 @@ export interface AttentionItem {
     /** An active run or chat uses this CLI, so updating has to wait. */
     inUse: boolean;
   };
+  /** Set on a question an automation workflow asks; answered from the inbox. */
+  automationQuestion?: AutomationQuestionAttention;
 }
 
 export const ATTENTION_KIND_LABELS: Record<AttentionKind, string> = {

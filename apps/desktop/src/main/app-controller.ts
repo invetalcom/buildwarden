@@ -1,7 +1,9 @@
 import { BuildWardenDatabase } from "@buildwarden/db";
 import type {
+  AnswerAutomationQuestionInput,
   AppWarning,
   AssistProjectForgeIssueInput,
+  AutomationWorkflowChangedPayload,
   ChatEvent,
   ChatInput,
   CommentProjectForgeIssueInput,
@@ -336,6 +338,12 @@ export class AppController
   }
   deleteProjectAutomation(automationId: string) { return this.services.automations.deleteProjectAutomation(automationId); }
   runProjectAutomationNow(automationId: string) { return this.services.automations.runProjectAutomationNow(automationId); }
+  answerAutomationQuestion(input: AnswerAutomationQuestionInput) { return this.services.automationWorkflows.answerQuestion(input); }
+  retryAutomationWorkflowRun(workflowRunId: string) { return this.services.automationWorkflows.retryWorkflowRun(workflowRunId); }
+  cancelAutomationWorkflowRun(workflowRunId: string) { return this.services.automationWorkflows.cancelWorkflowRun(workflowRunId); }
+  onAutomationWorkflowChanged(listener: (payload: AutomationWorkflowChangedPayload) => void) {
+    return this.services.automationWorkflows.onAutomationWorkflowChanged(listener);
+  }
   getStartupAutomationCatchUp() { return this.services.automations.getStartupAutomationCatchUp(); }
   resolveStartupAutomationCatchUp(automationIds: string[]) { return this.services.automations.resolveStartupAutomationCatchUp(automationIds); }
   resolveStartupAutomationsUnattended(runAllMissed: boolean, retryDelayMs?: number) { return this.services.automations.resolveStartupAutomationsUnattended(runAllMissed, retryDelayMs); }

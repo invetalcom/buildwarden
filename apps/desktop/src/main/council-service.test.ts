@@ -96,6 +96,24 @@ describe("CouncilService", () => {
     expect(host.releaseChild).toHaveBeenCalledTimes(4);
   });
 
+  it("stops a round whose start was still reading the run", async () => {
+    const { service, host, latest } = setup();
+    let releaseSubject!: () => void;
+    const captured = vi.mocked(host.captureSubject).getMockImplementation()!;
+    vi.mocked(host.captureSubject).mockImplementationOnce(async (run) => {
+      await new Promise<void>((resolve) => { releaseSubject = resolve; });
+      return captured(run);
+    });
+    const starting = service.start("run");
+    await vi.waitFor(() => expect(host.captureSubject).toHaveBeenCalled());
+    const stopping = service.stopForRun("run");
+    releaseSubject();
+    await starting;
+    await stopping;
+    expect(latest().status).toBe("cancelled");
+    expect(host.stopChild).toHaveBeenCalled();
+  });
+
   it("keeps going when one provider hits a usage limit", async () => {
     const { service, finishChild, childFor, latest } = setup();
     await service.start("run");

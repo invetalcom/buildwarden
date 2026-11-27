@@ -48,6 +48,8 @@ describe("ProjectLoopRunner", () => {
   let worktreeSetup: ((worktreePath: string) => void) | null;
   let runner: ProjectLoopRunner;
   let failRunDeletion: boolean;
+  let stoppedCouncilRunIds: string[];
+  let deps: ProjectLoopRunnerDeps;
 
   const fakeGitService = {
     fetchProjectBranches: async () => undefined,
@@ -217,6 +219,7 @@ describe("ProjectLoopRunner", () => {
 
   beforeEach(async () => {
     failRunDeletion = false;
+    stoppedCouncilRunIds = [];
     tempRoot = mkdtempSync(join(tmpdir(), "buildwarden-loop-test-"));
     db = new BuildWardenDatabase(join(tempRoot, "test.sqlite"));
     await db.init();
@@ -246,7 +249,7 @@ describe("ProjectLoopRunner", () => {
       iterations: [{ title: "Implement the change", objective: "Do the whole change in one PR." }],
     });
 
-    const deps: ProjectLoopRunnerDeps = {
+    deps = {
       db,
       gitService: fakeGitService,
       uiReviewImageRoot: join(tempRoot, "ui-images"),
@@ -273,6 +276,12 @@ describe("ProjectLoopRunner", () => {
         return "Audit: everything merged cleanly.";
       },
       createForgeProvider: async () => fakeForgeProvider(),
+      getCouncilRounds: async () => [],
+      startCouncil: async () => { throw new Error("No reviewers are configured."); },
+      stopCouncilForRun: async (runId) => { stoppedCouncilRunIds.push(runId); },
+      getRunVerification: async () => { throw new Error("Verification is not configured in this test."); },
+      applyCouncilFindings: async () => { throw new Error("No reviewers are configured."); },
+      verifyRun: async () => { throw new Error("Verification is not configured in this test."); },
       emitLoopChanged: () => undefined,
       logError: () => undefined,
       logWarn: () => undefined,
@@ -447,6 +456,37 @@ describe("ProjectLoopRunner", () => {
     ).rejects.toThrow(/local providers/);
   });
 
+  it("stops a verification fix turn that started after the loop was cancelled", async () => {
+    const cancelledRunIds: string[] = [];
+    let loopId = "";
+    const failed = { record: null, commands: ["pnpm test"], currentRevision: null, requiredBeforePublish: false, status: "failed" as const, reason: "2 tests failed" };
+    runner = new ProjectLoopRunner({
+      ...deps,
+      getRunVerification: async () => failed,
+      verifyRun: async () => failed,
+      cancelRun: async (runId) => { cancelledRunIds.push(runId); },
+      // The cancel arrives while the fix turn waits to start, when the run still looks finished.
+      followUpRun: async (runId) => {
+        await runner.cancelLoop(loopId);
+        return db.getRun(runId);
+      },
+    });
+    const loop = await runner.startLoop({
+      projectId: project.id,
+      name: "Cancelled during a fix",
+      prompt: "Fix the tests",
+      runnerModelId: model.id,
+      mergePolicy: "wait-for-approval",
+      uiChangePolicy: "auto",
+      verifyBeforePr: true,
+    });
+    loopId = loop.id;
+    await waitFor(() => cancelledRunIds.length > 0);
+    const runId = db.getProjectLoopDetail(loop.id).iterations[0]?.runId;
+    expect(cancelledRunIds).toEqual([runId]);
+    expect(db.getProjectLoop(loop.id).status).toBe("cancelled");
+  });
+
   it.each([false, true])("reports only removed runs when deleting a loop (run deletion fails: %s)", async (failDeletion) => {
     forgeState.merged = false;
     // Keep the PR un-merged and block merging so the loop stays in awaiting-merge.
@@ -465,6 +505,16 @@ describe("ProjectLoopRunner", () => {
     expect(db.getProjectLoopDetail(loop.id).iterations[0]?.status).toBe("cancelled");
 
     const runIds = db.getProjectLoopDetail(loop.id).iterations.flatMap((iteration) => iteration.runId ? [iteration.runId] : []);
+    expect(stoppedCouncilRunIds).toEqual(runIds);
+    if (!failDeletion) {
+      // A resume while a cancel still stops the council is refused instead of reviving the loop.
+      let releaseStop!: () => void;
+      runner = new ProjectLoopRunner({ ...deps, stopCouncilForRun: () => new Promise<void>((resolve) => { releaseStop = resolve; }) });
+      const cancelling = runner.cancelLoop(loop.id);
+      await expect(runner.resumeLoop(loop.id)).rejects.toThrow("This loop is being cancelled.");
+      releaseStop();
+      await cancelling;
+    }
     failRunDeletion = failDeletion;
     expect(await runner.deleteLoop(loop.id)).toEqual({ deletedRunIds: failDeletion ? [] : runIds });
     expect(() => db.getProjectLoop(loop.id)).toThrow(/not found/);

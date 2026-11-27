@@ -22,7 +22,7 @@ const HISTORY_BACKFILL_SLICE_DELAY_MS = 250;
 const HISTORY_INDEX_IDLE_DELAY_MS = 30_000;
 
 /** Manages bookmarks, sections, notes, layouts and the attention inbox. */
-export class OrganizationService extends AppService<"providerRuntime" | "runEvents" | "runForge"> {
+export class OrganizationService extends AppService<"automationWorkflows" | "providerRuntime" | "runEvents" | "runForge"> {
   addBookmark(runId: string): Promise<void> {
     this.db.addBookmark(runId);
     return Promise.resolve();
@@ -82,7 +82,12 @@ export class OrganizationService extends AppService<"providerRuntime" | "runEven
   }
 
   async getAttentionInbox(): Promise<AttentionItem[]> {
-    const items = this.db.listAttentionInbox();
+    const stored = this.db.listAttentionInbox();
+    // Questions rank with live approvals; paused workflows with blocked work.
+    const automation = this.services.automationWorkflows.attentionItems();
+    const items = automation.length
+      ? [...automation.filter((item) => item.kind === "approval"), ...stored, ...automation.filter((item) => item.kind !== "approval")]
+      : stored;
     const inbox = parseAttentionInboxSettings(this.db.getSettings()[APP_SETTING_KEYS.attentionInbox]);
     if (!inbox.enabled || !inbox.kinds.update) return items;
     const updates = this.services.providerRuntime.providerCliUpdates.attentionItems();
