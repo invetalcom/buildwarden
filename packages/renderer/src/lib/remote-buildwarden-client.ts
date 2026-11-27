@@ -172,6 +172,14 @@ const REMOTE_EVENT_TYPES = new Set<RemoteStreamEventType>([
   "owned-processes",
 ]);
 
+/**
+ * Events a host only knows from a certain version on. Older hosts reject a whole subscription that names an
+ * unknown event, so these are requested only once the host's hello lists the capability.
+ */
+const CAPABILITY_GATED_EVENTS: Partial<Record<RemoteStreamEventType, string>> = {
+  automation: "events:automation",
+};
+
 const isObject = (value: unknown): value is Record<string, unknown> =>
   value != null && typeof value === "object" && !Array.isArray(value);
 
@@ -254,6 +262,14 @@ export const createRemoteBuildWardenClient = (options: RemoteBuildWardenClientOp
   const activeEventTypes = (): RemoteStreamEventType[] =>
     [...listeners.entries()].filter(([, handlers]) => handlers.size > 0).map(([event]) => event);
 
+  /** Capabilities from the current socket's hello; null until it arrives. */
+  let hostCapabilities: ReadonlySet<string> | null = null;
+  let socketAuthenticated = false;
+  const subscribableEventTypes = (): RemoteStreamEventType[] => activeEventTypes().filter((event) => {
+    const needed = CAPABILITY_GATED_EVENTS[event];
+    return !needed || hostCapabilities?.has(needed) === true;
+  });
+
   const activeBrowserRunIds = (): string[] => [...new Set([...browserListenerRunIds.values()].flatMap((runIds) => [...runIds]))];
 
   const eventSocketUrl = (): string => {
@@ -272,7 +288,7 @@ export const createRemoteBuildWardenClient = (options: RemoteBuildWardenClientOp
       protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION,
       type: "subscribe",
       requestId: crypto.randomUUID(),
-      events: activeEventTypes(),
+      events: subscribableEventTypes(),
       ...(activeEventTypes().includes("browser") ? { browserRunIds: activeBrowserRunIds() } : {}),
     }));
   };
@@ -281,6 +297,8 @@ export const createRemoteBuildWardenClient = (options: RemoteBuildWardenClientOp
     if (eventSocket || activeEventTypes().length === 0) return;
     const socket = options.webSocketFactory?.(eventSocketUrl()) ?? new WebSocket(eventSocketUrl());
     eventSocket = socket;
+    hostCapabilities = null;
+    socketAuthenticated = !options.sessionToken;
     // The host keeps one encoder per connection, so each socket starts with empty decoders.
     const stepDecoders = { run: new StreamedStepEventDecoder(), chat: new StreamedStepEventDecoder() };
     socket.addEventListener("open", () => {
@@ -306,7 +324,15 @@ export const createRemoteBuildWardenClient = (options: RemoteBuildWardenClientOp
       }
       const message = parseRemoteServerMessage(decoded);
       if (message?.type === "authenticated") {
+        socketAuthenticated = true;
         sendSubscription();
+        return;
+      }
+      if (message?.type === "hello") {
+        const capabilities = (message.info as { capabilities?: unknown }).capabilities;
+        hostCapabilities = new Set(Array.isArray(capabilities) ? capabilities.filter((entry): entry is string => typeof entry === "string") : []);
+        // Subscribe again so events this host supports but an unknown host might reject are included.
+        if (socketAuthenticated && subscribableEventTypes().some((event) => CAPABILITY_GATED_EVENTS[event])) sendSubscription();
         return;
       }
       if (message?.type !== "event") return;

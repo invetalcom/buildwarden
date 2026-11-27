@@ -607,6 +607,41 @@ describe("remote BuildWarden client", () => {
     unsubscribe();
   });
 
+  it("asks for automation events only from hosts that announce them", () => {
+    type SocketListener = (event: { data?: string; code?: number }) => void;
+    const connect = () => {
+      const handlers = new Map<string, SocketListener[]>();
+      const sent: string[] = [];
+      const socket = {
+        readyState: 0,
+        addEventListener: (type: string, listener: SocketListener) => {
+          handlers.set(type, [...(handlers.get(type) ?? []), listener]);
+        },
+        send: (message: string) => sent.push(message),
+        close: vi.fn(),
+      };
+      const emit = (type: string, event: { data?: string } = {}) => handlers.get(type)?.forEach((handler) => handler(event));
+      const client = createRemoteBuildWardenClient({ fetch: vi.fn() as unknown as typeof fetch, webSocketFactory: () => socket as unknown as WebSocket });
+      client.onRunEvent(vi.fn());
+      client.onAutomationWorkflowChanged(vi.fn());
+      socket.readyState = 1;
+      emit("open");
+      const hello = (capabilities: string[]) => emit("message", { data: JSON.stringify({
+        protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION, type: "hello", info: { capabilities },
+      }) });
+      return { sent: () => sent.map((message) => JSON.parse(message) as { events: string[] }), hello };
+    };
+
+    const current = connect();
+    expect(current.sent()[0]?.events).toEqual(["run"]);
+    current.hello(["rpc", "events:run", "events:automation"]);
+    expect(current.sent()[1]?.events).toEqual(["run", "automation"]);
+
+    const older = connect();
+    older.hello(["rpc", "events:run"]);
+    expect(older.sent().map((message) => message.events)).toEqual([["run"]]);
+  });
+
   it("publishes validated live events from the authenticated WebSocket", () => {
     type SocketListener = (event: { data?: string; code?: number }) => void;
     const handlers = new Map<string, SocketListener[]>();
