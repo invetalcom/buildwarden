@@ -87,6 +87,48 @@ export const buildOrchestrationAwarePrompt = (
   ].join("\n");
 };
 
+export interface MentionableModel {
+  /** BuildWarden's model id, which buildwarden_tasks_delegate takes. */
+  id: string;
+  modelId: string;
+  displayName: string;
+  providerLabel: string;
+  providerType: string;
+}
+
+const MAX_MODEL_MENTIONS = 8;
+const mentionKey = (value: string): string => value.toLowerCase().replace(/[^a-z0-9.]+/g, "-");
+
+/**
+ * `@opus` or `@opus:claude` in the user's prompt, resolved to the team's models, so the user can
+ * name the model for delegated work without changing the run's own model. A mention that matches
+ * no model (a person, a file) is left alone; one that matches several lists them.
+ */
+export const describeModelMentions = (prompt: string, models: readonly MentionableModel[]): string | null => {
+  const lines: string[] = [];
+  const seen = new Set<string>();
+  for (const match of prompt.matchAll(/(?:^|[\s(,])@([A-Za-z0-9][\w.-]{0,59})(?::([\w.-]{1,60}))?/g)) {
+    const [, name = "", provider] = match;
+    const mention = `@${name}${provider ? `:${provider}` : ""}`;
+    if (seen.has(mention.toLowerCase()) || lines.length >= MAX_MODEL_MENTIONS) continue;
+    seen.add(mention.toLowerCase());
+    const key = mentionKey(name);
+    const matches = models.filter((model) =>
+      (mentionKey(model.displayName).includes(key) || mentionKey(model.modelId).includes(key)) &&
+      (!provider || mentionKey(model.providerLabel).includes(mentionKey(provider)) || mentionKey(model.providerType).includes(mentionKey(provider))));
+    const describe = (model: MentionableModel) => `"${model.id}" (${model.displayName}, ${model.providerLabel})`;
+    if (matches.length === 1) lines.push(`- ${mention}: ${describe(matches[0]!)}`);
+    else if (matches.length > 1) lines.push(`- ${mention}: ambiguous, one of ${matches.slice(0, 5).map(describe).join(", ")}`);
+  }
+  if (lines.length === 0) return null;
+  return [
+    "<model_mentions>",
+    "BuildWarden resolved the models the user named with @. Delegate the matching work to them by passing the modelId to buildwarden_tasks_delegate; the coordinator's own model stays as it is.",
+    ...lines,
+    "</model_mentions>",
+  ].join("\n");
+};
+
 /** Upper bounds on what one wake may add to the coordinator's context. */
 export const ORCHESTRATION_RESUME_RESULTS_BUDGET = 48_000;
 const ORCHESTRATION_RESUME_MAX_RESULT_CHARS = 12_000;

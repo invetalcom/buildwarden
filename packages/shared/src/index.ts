@@ -2400,6 +2400,35 @@ export const parseOrchestrationTeamSettings = (
   }
 };
 
+export const DEFAULT_ORCHESTRATION_ROLE_ID = "general";
+
+/**
+ * The team delegation uses while the user has configured no roles: one general role over every
+ * enabled model, preferring `preferredModelId` (usually the coordinator's own model). The limits
+ * stay those of `base`, so delegation needs no setup but keeps the user's caps.
+ */
+export const buildDefaultOrchestrationTeam = (
+  base: OrchestrationTeamSettings,
+  enabledModelIds: readonly string[],
+  preferredModelId?: string | null,
+): OrchestrationTeamSettings => {
+  const modelIds = Array.from(new Set(enabledModelIds.filter(Boolean)));
+  const preferred = preferredModelId && modelIds.includes(preferredModelId) ? preferredModelId : modelIds[0];
+  if (!preferred) return { ...base, models: [], roles: [] };
+  return {
+    ...base,
+    models: modelIds.map((modelId) => ({ modelId, enabled: true, maxConcurrent: Math.min(2, base.maxConcurrentTasks) })),
+    roles: [{
+      id: DEFAULT_ORCHESTRATION_ROLE_ID,
+      name: "General",
+      description: "Researches, implements or reviews one focused part of the task. Pick the model that fits the work; omit modelId for the coordinator's own model.",
+      eligibleModelIds: modelIds,
+      preferredModelId: preferred,
+      maxConcurrent: base.maxConcurrentTasks,
+    }],
+  };
+};
+
 export interface OrchestrationRecord {
   id: string;
   projectId: string;

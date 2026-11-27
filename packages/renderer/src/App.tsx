@@ -505,11 +505,14 @@ export const App = () => {
     () => parseOrchestrationTeamSettings(snapshot.settings[APP_SETTING_KEYS.orchestrationTeam]),
     [snapshot.settings],
   );
-  const delegationAvailable = orchestrationTeam.roles.length > 0;
+  // Without configured roles, delegation uses a default team over the enabled models. It is then
+  // available but starts off, so runs only delegate where the user chose a team or switched it on.
+  const delegationConfigured = orchestrationTeam.roles.length > 0;
+  const delegationAvailable = delegationConfigured || snapshot.models.some((model) => Boolean(model.enabled));
 
   useEffect(() => {
-    setRunDelegationEnabled(delegationAvailable);
-  }, [delegationAvailable]);
+    setRunDelegationEnabled(delegationConfigured);
+  }, [delegationConfigured]);
   const {
     welcomeOpen,
     welcomeStepIndex,

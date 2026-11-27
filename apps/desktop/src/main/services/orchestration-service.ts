@@ -1,5 +1,6 @@
 import {
   APP_SETTING_KEYS,
+  buildDefaultOrchestrationTeam,
   type OrchestrationChangedPayload,
   type OrchestrationDetail,
   type OrchestrationRecord,
@@ -9,6 +10,7 @@ import {
   type RunRecord,
 } from "@buildwarden/shared";
 import { closeCoordinatorWaitDeliveries } from "../orchestration-delivery";
+import { describeModelMentions } from "../orchestration-tools";
 import { ORCHESTRATION_TERMINAL_TASK_STATUSES, OrchestrationRuntimeActions } from "../orchestration-runtime-actions";
 import { getOrchestrationArtifactRoot } from "../orchestration-workspace";
 import type { RunBudgetExhaustion } from "../run-autonomy-budget";
@@ -44,13 +46,19 @@ export class OrchestrationService extends AppService<
     }
   }
 
-  resolveOrchestrationTeamSettings() {
+  /**
+   * The team a new orchestration freezes. Without configured roles it is the default team over
+   * every enabled model, preferring `preferredModelId`; configured roles are kept as the user set
+   * them, minus models that can no longer run.
+   */
+  resolveOrchestrationTeamSettings(preferredModelId?: string | null) {
     const configured = parseOrchestrationTeamSettings(
       this.db.getSettings()[APP_SETTING_KEYS.orchestrationTeam],
     );
     const availableModels = new Set(
       this.db.listModels().filter((model) => Boolean(model.enabled)).map((model) => model.id),
     );
+    if (configured.roles.length === 0) return buildDefaultOrchestrationTeam(configured, [...availableModels], preferredModelId);
     const models = configured.models.filter((model) => model.enabled && availableModels.has(model.modelId));
     const modelIds = new Set(models.map((model) => model.modelId));
     const roles = configured.roles.flatMap((role) => {
@@ -59,6 +67,22 @@ export class OrchestrationService extends AppService<
       return [{ ...role, eligibleModelIds }];
     });
     return { ...configured, models, roles };
+  }
+
+  /** The coordinator's prompt with the models the user named with `@`, when it names any. */
+  withModelMentions(run: RunRecord, prompt: string): string {
+    if (!run.delegationEnabled || run.kind === "orchestration-task" || !prompt.includes("@")) return prompt;
+    const team = this.db.getOrchestrationByCoordinatorRunId(run.id)?.teamSnapshot ?? this.resolveOrchestrationTeamSettings(run.modelId);
+    const teamModelIds = new Set(team.models.filter((model) => model.enabled).map((model) => model.modelId));
+    const providers = new Map(this.db.listProviderAccounts().map((provider) => [provider.id, provider]));
+    const note = describeModelMentions(prompt, this.db.listModels().filter((model) => teamModelIds.has(model.id)).map((model) => ({
+      id: model.id,
+      modelId: model.modelId,
+      displayName: model.displayName,
+      providerLabel: providers.get(model.providerAccountId)?.label ?? "",
+      providerType: providers.get(model.providerAccountId)?.providerType ?? "",
+    })));
+    return note ? `${prompt}\n\n${note}` : prompt;
   }
 
   getOrCreateOrchestration(coordinatorRun: RunRecord): OrchestrationRecord {
@@ -70,9 +94,9 @@ export class OrchestrationService extends AppService<
     if (coordinatorRun.kind === "orchestration-task") {
       throw new Error("Durable orchestration tools are available only to the top-level coordinator.");
     }
-    const teamSnapshot = this.resolveOrchestrationTeamSettings();
+    const teamSnapshot = this.resolveOrchestrationTeamSettings(coordinatorRun.modelId);
     if (teamSnapshot.roles.length === 0) {
-      throw new Error("Configure at least one valid orchestration role before delegating.");
+      throw new Error("Enable at least one model, or configure a valid orchestration role, before delegating.");
     }
     const orchestration = this.db.createOrchestration({
       projectId: coordinatorRun.projectId,
@@ -269,8 +293,8 @@ export class OrchestrationService extends AppService<
     if (tasks.some((task) => ORCHESTRATION_ACTIVE_TASK_STATUSES.has(task.status) || task.status === "pending")) {
       throw new Error("The frozen team can be refreshed only when no tasks are pending or running.");
     }
-    const team = this.resolveOrchestrationTeamSettings();
-    if (team.roles.length === 0) throw new Error("Configure at least one valid orchestration role.");
+    const team = this.resolveOrchestrationTeamSettings(this.db.getRun(coordinatorRunId).modelId);
+    if (team.roles.length === 0) throw new Error("Enable at least one model, or configure a valid orchestration role.");
     this.db.updateOrchestration(orchestration.id, { teamSnapshot: team });
     this.db.appendOrchestrationEvent({
       orchestrationId: orchestration.id,

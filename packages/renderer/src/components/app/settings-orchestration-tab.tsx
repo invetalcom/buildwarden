@@ -456,7 +456,7 @@ export const OrchestrationSettingsTab = ({
             <div className="px-4 py-6 text-center text-sm text-[var(--ec-muted)]">
               {selectedModelIds.size === 0
                 ? "Enable at least one model, then add a role."
-                : "Add a predefined role or create a custom role."}
+                : "Add a predefined role or create a custom role. Until then, delegation uses one General role over every enabled model."}
             </div>
           ) : draft.roles.map((role) => (
             <section key={role.id} className="border-b border-[var(--ec-border)] p-3 last:border-b-0">

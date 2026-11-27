@@ -23,7 +23,7 @@ import { parseMetadataRecord } from "./run-step-content";
 import { RunWorkerTurn, type RunWorkerTurnDependencies } from "./run-worker-turn";
 
 /** Starts a run's turn in a worker thread. */
-export class RunWorkerHost extends AppService<RunWorkerTurnDependencies | "providerRuntime" | "skills"> {
+export class RunWorkerHost extends AppService<RunWorkerTurnDependencies | "orchestration" | "providerRuntime" | "skills"> {
   /**
    * The model each live run's provider last said served it. The reports are silent chunks, which
    * are not saved as steps, so publication copies the value into its durable effect.
@@ -119,7 +119,10 @@ export class RunWorkerHost extends AppService<RunWorkerTurnDependencies | "provi
           workspaceVcs: run.workspaceVcs,
           mode: run.mode,
           yoloMode: options?.yoloMode === true,
-          prompt: options?.promptOverride ?? run.prompt,
+          // An orchestration update is BuildWarden's own text; only the user's prompts name models.
+          prompt: options?.isOrchestrationUpdate
+            ? options?.promptOverride ?? run.prompt
+            : this.services.orchestration.withModelMentions(run, options?.promptOverride ?? run.prompt),
           providerType: provider.providerType,
           modelId: model.modelId,
           apiKey,

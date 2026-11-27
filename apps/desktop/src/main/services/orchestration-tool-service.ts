@@ -186,7 +186,7 @@ export class OrchestrationToolService extends AppService<
 
   private async buildOrchestrationCoordinatorView(coordinatorRunId: string) {
     const orchestration = this.db.getOrchestrationByCoordinatorRunId(coordinatorRunId);
-    const team = orchestration?.teamSnapshot ?? this.services.orchestration.resolveOrchestrationTeamSettings();
+    const team = orchestration?.teamSnapshot ?? this.services.orchestration.resolveOrchestrationTeamSettings(this.db.getRun(coordinatorRunId).modelId);
     const totalTokens = orchestration ? this.db.getOrchestrationTotalTokens(orchestration.id) : 0;
     const coordinator = this.db.getRun(coordinatorRunId);
     const budgetWarning = this.coordinatorBudgetWarning(coordinator, team);
