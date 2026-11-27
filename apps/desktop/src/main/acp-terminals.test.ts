@@ -40,6 +40,9 @@ describe("ACP terminals", () => {
     expect(output.output.trim().toLowerCase()).toBe(workspace.toLowerCase());
     await terminals.release({ terminalId });
     expect(() => terminals.output({ terminalId })).toThrow("Unknown terminal");
+    // The tool step still shows how the command ended.
+    expect(terminals.snapshot(terminalId)).toMatchObject({ exitStatus: { exitCode: 3 } });
+    expect(terminals.snapshot(terminalId)?.output.trim().toLowerCase()).toBe(workspace.toLowerCase());
   });
 
   it("keeps only the newest output within the agent's byte limit", async () => {

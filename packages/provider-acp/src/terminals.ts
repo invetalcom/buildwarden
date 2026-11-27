@@ -7,6 +7,9 @@ import { terminatePosixProcessTree } from "@buildwarden/agent-runtime";
 const DEFAULT_OUTPUT_BYTE_LIMIT = 1_048_576;
 const MAX_OUTPUT_BYTE_LIMIT = 16 * 1_048_576;
 const MAX_TERMINALS = 32;
+/** What a released terminal keeps for its tool step: as much as the step shows, for the turn's latest terminals. */
+const RELEASED_OUTPUT_CHARS = 16_000;
+const MAX_RELEASED_TERMINALS = 64;
 
 export interface AcpTerminalExitStatus {
   exitCode: number | null;
@@ -107,6 +110,8 @@ export class AcpTerminals {
   private readonly terminals = new Map<string, Terminal>();
   /** Set when the turn's cleanup starts: a terminal that started later would never be stopped. */
   private closed = false;
+  /** The last output of released terminals, which the tool step still shows. */
+  private readonly released = new Map<string, AcpTerminalSnapshot>();
 
   constructor(private readonly options: {
     workspace: string;
@@ -198,7 +203,7 @@ export class AcpTerminals {
 
   snapshot(terminalId: string): AcpTerminalSnapshot | null {
     const terminal = this.terminals.get(terminalId);
-    if (!terminal) return null;
+    if (!terminal) return this.released.get(terminalId) ?? null;
     this.compact(terminal);
     return {
       id: terminal.id, commandLine: terminal.commandLine, request: terminal.request,
@@ -223,7 +228,11 @@ export class AcpTerminals {
   async release(raw: unknown): Promise<null> {
     const terminal = this.get(raw);
     await this.stop(terminal);
+    // An agent may release a terminal before it reports the tool done; the step keeps its end.
+    const last = this.snapshot(terminal.id)!;
     this.terminals.delete(terminal.id);
+    this.released.set(terminal.id, { ...last, output: last.output.slice(-RELEASED_OUTPUT_CHARS) });
+    if (this.released.size > MAX_RELEASED_TERMINALS) this.released.delete(this.released.keys().next().value!);
     return null;
   }
 
