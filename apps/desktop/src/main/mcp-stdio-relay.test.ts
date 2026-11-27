@@ -253,7 +253,7 @@ const callServer = (server, messages) => new Promise((resolve, reject) => {
   let stderr = "";
   child.stderr.on("data", (chunk) => { stderr += chunk; });
   createInterface({ input: child.stdout }).on("line", (line) => answers.push(JSON.parse(line)));
-  child.on("exit", () => resolve({ answers, stderr }));
+  child.on("close", () => resolve({ answers, stderr }));
   child.on("error", reject);
   for (const message of messages) child.stdin.write(JSON.stringify(message) + "\n");
   child.stdin.end();
