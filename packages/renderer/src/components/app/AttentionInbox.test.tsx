@@ -33,7 +33,7 @@ const render = async (readOnly = false, initialItems = items, failId?: string, t
   });
   const client = createElectronBuildWardenClient({ getAttentionInbox: getItems, acknowledgeAttentionItem: acknowledge,
     acknowledgeAttentionItems: acknowledgeMany,
-    runProviderCliUpdate: runUpdate, onProviderCliUpdatesChanged: () => () => {},
+    runProviderCliUpdate: runUpdate, onProviderCliUpdatesChanged: () => () => {}, onAutomationWorkflowChanged: () => () => {},
     onRunEvent: () => () => {}, onOrchestrationChanged: () => () => {}, onRunForgeRequestChanged: () => () => {},
   } as unknown as DesktopApi);
   const onOpenRun = vi.fn(); container = document.createElement("div"); document.body.append(container); root = createRoot(container);

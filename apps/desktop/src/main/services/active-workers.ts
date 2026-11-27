@@ -5,6 +5,7 @@ import { type ActiveWorker, ActiveWorkerMap } from "./worker-payloads";
 /** Tracks the live run and chat worker threads and stops them. */
 export class ActiveWorkers extends AppService<
   | "automations"
+  | "automationWorkflows"
   | "processes"
   | "projectLab"
   | "projectLoops"
@@ -38,6 +39,7 @@ export class ActiveWorkers extends AppService<
     const titleShutdown = this.services.titles.sessionTitleServiceInstance?.stop();
     if (this.services.automations.automationSchedulerTimer) clearInterval(this.services.automations.automationSchedulerTimer);
     this.services.automations.automationSchedulerTimer = null;
+    this.services.automationWorkflows.stopWorkflowTimers();
     const runs = [...this.runWorkers.entries()];
     const chats = [...this.chatWorkers.entries()];
     // Invalidate callbacks before cancellation can synchronously deliver terminal messages.

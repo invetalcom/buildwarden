@@ -162,6 +162,7 @@ const REMOTE_EVENT_TYPES = new Set<RemoteStreamEventType>([
   "warning",
   "loop",
   "task",
+  "automation",
   "orchestration",
   "terminal-data",
   "terminal-exit",
@@ -188,6 +189,9 @@ const isRemoteEventPayload = (event: RemoteStreamEventType, payload: unknown): b
   }
   if (event === "warning") return typeof payload.title === "string" && typeof payload.message === "string";
   if (event === "loop") return typeof payload.loopId === "string" && typeof payload.projectId === "string";
+  if (event === "automation") {
+    return typeof payload.workflowRunId === "string" && typeof payload.automationId === "string" && typeof payload.projectId === "string";
+  }
   if (event === "terminal-data") return typeof payload.sessionId === "string" && typeof payload.data === "string";
   if (event === "terminal-exit") return typeof payload.sessionId === "string" && Number.isInteger(payload.exitCode);
   if (event === "browser") return typeof payload.runId === "string" &&
@@ -602,6 +606,7 @@ export const createRemoteBuildWardenClient = (options: RemoteBuildWardenClientOp
     // Browsers receive links through the page URL; only the desktop app has OS-delivered links.
     consumePendingDeepLink: async () => null,
     onProjectLoopChanged: (listener) => subscribe("loop", listener),
+    onAutomationWorkflowChanged: (listener) => subscribe("automation", listener),
     onProjectTaskChanged: (listener) => subscribe("task", listener),
     onRunOrganizationChanged: (listener) => subscribe("run-organization", listener),
     onOrchestrationChanged: (listener) => subscribe("orchestration", listener),

@@ -1,6 +1,7 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { extname, isAbsolute, join, relative, resolve } from "node:path";
 import type {
+  CouncilRound,
   CreateProjectLoopInput,
   ProjectLoopChangedPayload,
   ProjectLoopIterationRecord,
@@ -10,11 +11,13 @@ import type {
   RunFollowUpOptions,
   RunInput,
   RunRecord,
+  RunVerificationState,
 } from "@buildwarden/shared";
 import { ACTIVE_PROJECT_LOOP_STATUSES, isActiveProjectLoopStatus, isLoopCapableProviderType } from "@buildwarden/shared";
 import type { BuildWardenDatabase } from "@buildwarden/db";
 import type { GitService } from "@buildwarden/git-service";
 import type { ProjectPrReviewProvider } from "../pr-review/pr-review-types";
+import { runLoopPrChecks } from "./loop-pr-checks";
 import {
   LOOP_COMMENT_MARKER,
   LOOP_MAX_AI_UI_REVIEW_ROUNDS,
@@ -101,6 +104,9 @@ export interface ProjectLoopRunnerDeps {
   deleteRun(runId: string): Promise<void>;
   askModelForText(cwd: string, modelId: string, input: ProjectLoopAskTextInput): Promise<string>;
   createForgeProvider(projectId: string): Promise<ProjectPrReviewProvider>;
+  startCouncil(runId: string): Promise<CouncilRound>;
+  applyCouncilFindings(roundId: string, groupIds: string[]): Promise<CouncilRound>;
+  verifyRun(runId: string): Promise<RunVerificationState>;
   emitLoopChanged(payload: ProjectLoopChangedPayload): void;
   logError(message: string, error: unknown, metadata?: Record<string, unknown>): void;
   logWarn(message: string, metadata?: Record<string, unknown>): void;
@@ -238,6 +244,8 @@ abstract class ProjectLoopRunnerCore {
       uiChangePolicy: input.uiChangePolicy,
       prReviewPolicy: input.prReviewPolicy ?? "none",
       uiReviewInstructions: input.uiReviewInstructions?.trim() || null,
+      councilBeforePr: input.councilBeforePr === true,
+      verifyBeforePr: input.verifyBeforePr === true,
       baseBranch,
       status: "planning",
     });
@@ -254,6 +262,9 @@ abstract class ProjectLoopRunnerCore {
             ? "the review model posts a visible code review on each PR/MR, and the loop then addresses its findings"
             : "no automatic review is posted"
         }`,
+        ...(loop.councilBeforePr || loop.verifyBeforePr
+          ? [`Before each PR/MR: ${[loop.councilBeforePr ? "council review with fixes" : "", loop.verifyBeforePr ? "verification" : ""].filter(Boolean).join(", ")}`]
+          : []),
         "Implementation runs execute with auto-approved shell commands so the loop can work unattended.",
       ].join("\n"),
     );
@@ -558,6 +569,8 @@ abstract class ProjectLoopRunnerCore {
       if (run && !["awaiting-merge", "addressing-comments"].includes(iteration.status)) {
         await this.runUiGate(state, loop, iteration, run);
         this.assertNotCancelled(state);
+        await this.runPrChecks(state, loop, iteration, run);
+        this.assertNotCancelled(state);
       }
       iteration = this.deps.db.getProjectLoopIteration(iterationId);
       if (!iteration.prUrl) {
@@ -569,6 +582,25 @@ abstract class ProjectLoopRunnerCore {
     }
 
     await this.monitorUntilMerged(state, loopId, iterationId);
+  }
+
+  /** Council review and verification the loop was told to run before each pull request. */
+  private async runPrChecks(state: LoopRuntimeState, loop: ProjectLoopRecord, iteration: ProjectLoopIterationRecord, run: RunRecord): Promise<void> {
+    if (!loop.councilBeforePr && !loop.verifyBeforePr) return;
+    await runLoopPrChecks({
+      listCouncilRounds: (runId) => this.deps.db.listCouncilRounds(runId),
+      getCouncilRound: (roundId) => this.deps.db.getCouncilRound(roundId),
+      startCouncil: (runId) => this.deps.startCouncil(runId),
+      applyCouncilFindings: (roundId, groupIds) => this.deps.applyCouncilFindings(roundId, groupIds),
+      verifyRun: (runId) => this.deps.verifyRun(runId),
+      followUpAndWait: async (runId, prompt) => {
+        await this.deps.followUpRun(runId, prompt, { yoloMode: true });
+        return this.waitForRunCompletion(state, runId);
+      },
+      sleep: (ms) => this.sleep(state, ms),
+      assertNotCancelled: () => this.assertNotCancelled(state),
+      appendEvent: (label, content) => this.appendEvent(loop, "runner", label, content, iteration.id),
+    }, loop, run);
   }
 
   private async startImplementationRun(

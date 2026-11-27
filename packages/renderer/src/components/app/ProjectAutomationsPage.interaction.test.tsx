@@ -31,13 +31,15 @@ const existingAutomation: ProjectAutomationRecord = {
   lastScheduledAt: null,
   nextRunAt: "2026-08-20T09:00:00.000Z",
   lastError: null,
+  trigger: { kind: "schedule" },
+  workflow: { check: null, steps: [] },
   createdAt: "2026-08-19T09:00:00.000Z",
   updatedAt: "2026-08-19T09:00:00.000Z",
 };
 
 const automationItem = (): ProjectAutomationListItem => {
   const { attachments, ...automation } = existingAutomation;
-  return { automation: { ...automation, attachmentCount: attachments.length }, runs: [] };
+  return { automation: { ...automation, attachmentCount: attachments.length }, runs: [], workflowRuns: [] };
 };
 
 let root: Root | null = null;
@@ -195,7 +197,7 @@ describe("project automations create flow", () => {
     const secondAutomation = { ...existingAutomation, id: "automation-2", name: "Second automation" };
     const secondItem = (): ProjectAutomationListItem => {
       const { attachments, ...automation } = secondAutomation;
-      return { automation: { ...automation, attachmentCount: attachments.length }, runs: [] };
+      return { automation: { ...automation, attachmentCount: attachments.length }, runs: [], workflowRuns: [] };
     };
     const api = { getProjectAutomation } as unknown as DesktopApi;
 
@@ -244,7 +246,7 @@ describe("project automations create flow", () => {
     const secondAutomation = { ...existingAutomation, id: "automation-2", name: "Second automation" };
     const secondItem = (): ProjectAutomationListItem => {
       const { attachments, ...automation } = secondAutomation;
-      return { automation: { ...automation, attachmentCount: attachments.length }, runs: [] };
+      return { automation: { ...automation, attachmentCount: attachments.length }, runs: [], workflowRuns: [] };
     };
     const api = {
       getProjectAutomation: vi.fn(async () => existingAutomation),
@@ -300,7 +302,7 @@ describe("project automations create flow", () => {
     const secondAutomation = { ...existingAutomation, id: "automation-2", name: "Second automation" };
     const secondItem = (): ProjectAutomationListItem => {
       const { attachments, ...automation } = secondAutomation;
-      return { automation: { ...automation, attachmentCount: attachments.length }, runs: [] };
+      return { automation: { ...automation, attachmentCount: attachments.length }, runs: [], workflowRuns: [] };
     };
     const api = { deleteProjectAutomation } as unknown as DesktopApi;
     Object.defineProperty(window, "confirm", { configurable: true, value: vi.fn(() => true) });
@@ -364,7 +366,7 @@ describe("one-time automations", () => {
 
   const listItem = (record: ProjectAutomationRecord, runs: ProjectAutomationListItem["runs"] = []): ProjectAutomationListItem => {
     const { attachments, ...automation } = record;
-    return { automation: { ...automation, attachmentCount: attachments.length }, runs };
+    return { automation: { ...automation, attachmentCount: attachments.length }, runs, workflowRuns: [] };
   };
 
   const renderPage = async (api: Partial<DesktopApi>, automations: ProjectAutomationListItem[]) => {

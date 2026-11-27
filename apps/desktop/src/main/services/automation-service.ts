@@ -1,7 +1,14 @@
 import { setTimeout as delay } from "node:timers/promises";
 import {
   automationLocalDateTimeToUtc,
+  type AutomationTrigger,
+  type AutomationWorkflowTriggerInfo,
+  DEFAULT_AUTOMATION_TRIGGER,
   formatAutomationLocalDateTime,
+  isAutomationWorkflow,
+  parseAutomationTrigger,
+  parseAutomationWorkflow,
+  validateAutomationWorkflow,
   nextAutomationRunAt,
   oneTimeAutomationRunAt,
   parseAutomationCron,
@@ -16,11 +23,15 @@ import {
 import { getHarnessTypeForProvider } from "../harness-adapters";
 import { AppService } from "./app-service";
 import { ACTIVE_RUN_STATUSES } from "./app-service-constants";
+import { automationTriggerInfo } from "./automation-trigger-service";
 
 /** Covers a restart or update of a headless host. */
 const UNATTENDED_AUTOMATION_GRACE_MS = 15 * 60_000;
 const UNATTENDED_AUTOMATION_RETRY_MS = 30_000;
 const automationOccurrenceKey = (automationId: string, scheduledAt: string): string => `${automationId} ${scheduledAt}`;
+
+/** Stored for automations that do not start on a schedule, so a later switch to one has a valid start. */
+const FALLBACK_CRON_EXPRESSION = "0 9 * * 1-5";
 
 const resolveAutomationTimeZone = (timeZone: string | undefined): string =>
   timeZone?.trim() || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
@@ -35,6 +46,8 @@ const isSameProjectAutomationRevision = (current: ProjectAutomationRecord, previ
 /** Schedules and starts project automations. */
 export class AutomationService extends AppService<
   | "activeWorkers"
+  | "automationTriggers"
+  | "automationWorkflows"
   | "forgeIssueActions"
   | "orchestrationDispatch"
   | "projects"
@@ -57,6 +70,8 @@ export class AutomationService extends AppService<
     projectId: string,
     input: ProjectAutomationInput,
     options?: {
+      /** The automation being changed, so its own trigger is not mistaken for a loop. */
+      automationId?: string;
       skipBranchExistenceCheck?: boolean;
       /** Keeps an unchanged one-time start that already lies in the past (e.g. renaming a finished automation). */
       allowPastRunAt?: boolean;
@@ -70,11 +85,20 @@ export class AutomationService extends AppService<
       throw new Error("Enter a prompt or attach at least one file.");
     }
     validateChatAttachmentPayloads(input.attachments);
-    const scheduleKind = input.scheduleKind ?? "cron";
-    const cronExpression = scheduleKind === "cron" ? input.cronExpression.trim() : "";
-    if (scheduleKind === "cron") parseAutomationCron(cronExpression);
+    const trigger = parseAutomationTrigger(input.trigger ?? DEFAULT_AUTOMATION_TRIGGER);
+    this.validateAutomationTrigger(project.id, trigger, options?.automationId ?? null);
+    const workflow = parseAutomationWorkflow(input.workflow ?? { check: null, steps: [] });
+    const workflowProblem = validateAutomationWorkflow(workflow, { gitProject: project.kind === "git" });
+    if (workflowProblem) throw new Error(workflowProblem);
+    const scheduled = trigger.kind === "schedule";
+    const scheduleKind = scheduled ? input.scheduleKind ?? "cron" : "cron";
+    let cronExpression = scheduleKind === "cron" ? input.cronExpression.trim() : "";
+    if (scheduled && scheduleKind === "cron") parseAutomationCron(cronExpression);
+    if (!scheduled) {
+      try { parseAutomationCron(cronExpression); } catch { cronExpression = FALLBACK_CRON_EXPRESSION; }
+    }
     const timeZone = validateAutomationTimeZone(resolveAutomationTimeZone(input.timeZone));
-    const runAtLocal = scheduleKind === "once" ? input.runAtLocal?.trim() ?? "" : undefined;
+    const runAtLocal = scheduled && scheduleKind === "once" ? input.runAtLocal?.trim() ?? "" : undefined;
     let nextRunAt: string;
     if (runAtLocal === undefined) {
       nextRunAt = nextAutomationRunAt(cronExpression, timeZone, new Date());
@@ -94,10 +118,32 @@ export class AutomationService extends AppService<
       }
     }
     return {
-      input: { ...input, name, prompt, scheduleKind, cronExpression, runAtLocal, workspaceType, baseBranch },
+      input: { ...input, name, prompt, scheduleKind, cronExpression, runAtLocal, workspaceType, baseBranch, trigger, workflow },
       timeZone,
       nextRunAt,
     };
+  }
+
+  private validateAutomationTrigger(projectId: string, trigger: AutomationTrigger, automationId: string | null): void {
+    const gitProject = this.db.getProject(projectId).kind === "git";
+    if (trigger.kind === "issue-labelled") {
+      if (!gitProject) throw new Error("Issue labels need a Git project with a hosted remote.");
+      if (!trigger.label) throw new Error("Enter the label that starts this automation.");
+    }
+    if (trigger.kind === "pr-opened" && !gitProject) throw new Error("Pull requests need a Git project with a hosted remote.");
+    if (trigger.kind !== "automation-finished") return;
+    if (!trigger.automationId) throw new Error("Choose the automation this one follows.");
+    if (trigger.automationId === automationId) throw new Error("An automation cannot start after itself.");
+    // Each automation follows at most one other, so following the chain upwards finds every loop.
+    const seen = new Set<string>(automationId ? [automationId] : []);
+    let upstreamId: string | null = trigger.automationId;
+    while (upstreamId) {
+      if (seen.has(upstreamId)) throw new Error("These automations would start each other in a loop.");
+      seen.add(upstreamId);
+      const upstream = this.db.getProjectAutomation(upstreamId);
+      if (upstream.projectId !== projectId) throw new Error("Choose an automation of the same project.");
+      upstreamId = upstream.trigger.kind === "automation-finished" ? upstream.trigger.automationId : null;
+    }
   }
 
   async createProjectAutomation(projectId: string, input: ProjectAutomationInput): Promise<ProjectAutomationRecord> {
@@ -159,14 +205,20 @@ export class AutomationService extends AppService<
       baseBranch: input.baseBranch === undefined ? existing.baseBranch : input.baseBranch,
       onlyIfPreviousFinished: input.onlyIfPreviousFinished ?? Boolean(existing.onlyIfPreviousFinished),
       enabled: input.enabled ?? Boolean(existing.enabled),
+      trigger: input.trigger ?? existing.trigger,
+      workflow: input.workflow ?? existing.workflow,
     };
+    const triggerKind = parseAutomationTrigger(merged.trigger).kind;
     const disablingOnly = input.enabled === false && Object.keys(input).every((key) => key === "enabled");
     // Re-enabling counts as a schedule change, so a one-time automation that already fired
     // (and disabled itself) can only be switched back on with a new start in the future.
     const scheduleChanged = scheduleKind !== existing.scheduleKind || merged.timeZone !== existing.timeZone ||
       (scheduleKind === "once" ? merged.runAtLocal !== existingRunAtLocal : merged.cronExpression !== existing.cronExpression) ||
-      (!existing.enabled && merged.enabled !== false);
+      (!existing.enabled && merged.enabled !== false) ||
+      // Switching to a schedule arms it from now.
+      (triggerKind === "schedule" && existing.trigger.kind !== "schedule");
     const validated = await this.validateProjectAutomationInput(existing.projectId, merged, {
+      automationId: existing.id,
       skipBranchExistenceCheck: disablingOnly,
       allowPastRunAt: !scheduleChanged,
     });
@@ -185,6 +237,9 @@ export class AutomationService extends AppService<
     if (isLaunching || runs.some((run) => ACTIVE_RUN_STATUSES.has(run.status))) {
       throw new Error("Wait for this automation's active run to finish before deleting it.");
     }
+    if (this.services.automationWorkflows.hasActiveWorkflowRun(automationId)) {
+      throw new Error("Stop this automation's running workflow before deleting it.");
+    }
     this.automationsBeingDeleted.add(automationId);
     try {
       for (const run of runs) await this.services.runDeletion.deleteRun(run.id);
@@ -194,27 +249,61 @@ export class AutomationService extends AppService<
     }
   }
 
+  /** True until the missed automations of this launch were reviewed; nothing starts automations before that. */
+  get startupReviewPending(): boolean {
+    return this.automationSchedulerBlockedForStartup;
+  }
+
   private requireAutomationNotBeingDeleted(automationId: string): void {
     if (this.automationsBeingDeleted.has(automationId)) throw new Error("This automation is being deleted.");
   }
 
-  private async executeProjectAutomation(automation: ProjectAutomationRecord): Promise<RunRecord | null> {
+  private async executeProjectAutomation(
+    automation: ProjectAutomationRecord,
+    trigger: AutomationWorkflowTriggerInfo = automationTriggerInfo("schedule", "Scheduled start"),
+  ): Promise<RunRecord | null> {
     this.requireAutomationNotBeingDeleted(automation.id);
     const launch = { automationId: automation.id };
     this.automationLaunches.add(launch);
     try {
-      return await this.launchProjectAutomation(automation);
+      return await this.launchProjectAutomation(automation, trigger);
     } finally {
       this.automationLaunches.delete(launch);
     }
   }
 
-  private async launchProjectAutomation(automation: ProjectAutomationRecord): Promise<RunRecord | null> {
+  /**
+   * Starts an automation for a trigger other than its schedule. Issue and pull request triggers start one run
+   * per item; an automation that follows another one waits for its previous run like a schedule does.
+   */
+  async startTriggeredAutomation(automationId: string, trigger: AutomationWorkflowTriggerInfo): Promise<RunRecord | null> {
+    const automation = this.db.getProjectAutomation(automationId);
+    if (!automation.enabled || this.automationsBeingDeleted.has(automationId)) return null;
+    try {
+      const run = await this.executeProjectAutomation(automation, trigger);
+      if (run) this.db.setProjectAutomationError(automationId, null);
+      return run;
+    } catch (error) {
+      this.db.setProjectAutomationError(automationId, error instanceof Error ? error.message : String(error));
+      throw error;
+    }
+  }
+
+  private async launchProjectAutomation(automation: ProjectAutomationRecord, trigger: AutomationWorkflowTriggerInfo): Promise<RunRecord | null> {
     const previousActive = this.db.listRunsForProject(automation.projectId).some(
       (run) => run.automationId === automation.id && ACTIVE_RUN_STATUSES.has(run.status),
-    );
+    ) || this.services.automationWorkflows.hasActiveWorkflowRun(automation.id);
     // A one-time automation has a single occurrence; skipping it would silently lose the run.
-    if (automation.scheduleKind === "cron" && automation.onlyIfPreviousFinished && previousActive) return null;
+    // Issue and pull request triggers start once per item, so they never wait either.
+    const waitsForPrevious = trigger.kind === "automation-finished" || (trigger.kind === "schedule" && automation.scheduleKind === "cron");
+    if (waitsForPrevious && automation.onlyIfPreviousFinished && previousActive) return null;
+    if (isAutomationWorkflow(automation.workflow) || trigger.kind === "issue-labelled" || trigger.kind === "pr-opened" ||
+      trigger.kind === "automation-finished") {
+      const workflow = await this.services.automationWorkflows.startWorkflow(automation, trigger);
+      const runId = workflow.steps[0]?.runId;
+      if (!runId) throw new Error(workflow.error ?? "The automation could not start.");
+      return this.db.getRun(runId);
+    }
     const model = this.db.getModel(automation.modelId);
     const provider = this.db.getProviderAccount(model.providerAccountId);
     const project = this.db.getProject(automation.projectId);
@@ -251,7 +340,7 @@ export class AutomationService extends AppService<
 
   async runProjectAutomationNow(automationId: string): Promise<RunRecord> {
     const automation = this.db.getProjectAutomation(automationId);
-    const run = await this.executeProjectAutomation(automation);
+    const run = await this.executeProjectAutomation(automation, automationTriggerInfo("now", "Started by hand"));
     if (!run) throw new Error("The previous automation run is still active.");
     this.db.setProjectAutomationError(automationId, null);
     return run;
@@ -265,7 +354,7 @@ export class AutomationService extends AppService<
   private listDueAutomations(): StartupAutomationCatchUpItem[] {
     const now = Date.now();
     return this.db.listProjectAutomations()
-      .filter((automation) => Boolean(automation.enabled) && Date.parse(automation.nextRunAt) <= now)
+      .filter((automation) => automation.trigger.kind === "schedule" && Boolean(automation.enabled) && Date.parse(automation.nextRunAt) <= now)
       .map((automation) => ({
         automationId: automation.id,
         automationName: automation.name,
@@ -334,7 +423,8 @@ export class AutomationService extends AppService<
           const automation = this.db.getProjectAutomation(item.automationId);
           // Earlier launches in this loop can take a while; an automation rescheduled meanwhile
           // keeps its new start and is left to the scheduler.
-          if (!automation.enabled || automation.nextRunAt !== item.scheduledAt || Date.parse(automation.nextRunAt) > now.getTime()) continue;
+          if (!automation.enabled || automation.trigger.kind !== "schedule" || automation.nextRunAt !== item.scheduledAt ||
+            Date.parse(automation.nextRunAt) > now.getTime()) continue;
           // A deletion that fails must find the occurrence due and the decision kept. The scheduler then
           // starts a selected one and consumes a skipped one without starting it.
           if (this.automationsBeingDeleted.has(automation.id)) {
@@ -390,7 +480,11 @@ export class AutomationService extends AppService<
       void this.services.orchestrationDispatch.runDeferredOrchestrationTick();
       void this.runAutomationSchedulerTick();
       void this.services.forgeIssueActions.runForgeIssueAutomationTick();
+      void this.services.automationTriggers.runTriggerTick();
+      this.services.automationWorkflows.runWorkflowTick();
     }, 30_000);
+    // Workflows that were waiting when the app closed continue without waiting for the first interval.
+    this.services.automationWorkflows.runWorkflowTick();
   }
 
   private async runAutomationSchedulerTick(): Promise<void> {
@@ -399,14 +493,15 @@ export class AutomationService extends AppService<
     try {
       const now = new Date();
       const due = this.db.listProjectAutomations().filter(
-        (automation) => Boolean(automation.enabled) && Date.parse(automation.nextRunAt) <= now.getTime(),
+        (automation) => automation.trigger.kind === "schedule" && Boolean(automation.enabled) && Date.parse(automation.nextRunAt) <= now.getTime(),
       );
       for (const automation of due) {
         if (this.services.activeWorkers.agentWorkersStopping) break;
         try {
           const current = this.db.getProjectAutomation(automation.id);
           // A deletion that fails leaves the occurrence for a later tick.
-          if (!current.enabled || Date.parse(current.nextRunAt) > now.getTime() || this.automationsBeingDeleted.has(current.id)) continue;
+          if (!current.enabled || current.trigger.kind !== "schedule" || Date.parse(current.nextRunAt) > now.getTime() ||
+            this.automationsBeingDeleted.has(current.id)) continue;
           this.consumeDueAutomationOccurrence(current, current.nextRunAt, now);
           if (this.wasSkippedAtStartup(current)) continue;
           await this.executeProjectAutomation(current);

@@ -21,6 +21,7 @@ import {
   DESIGN_SCHEME_PRESETS,
   IPC_CHANNELS,
   PROJECT_INSIGHT_KINDS,
+  isAnswerAutomationQuestionInput,
   isAttentionAcknowledgementBatch,
   isManageOwnedProcessesInput,
   isOwnedProcessOwner,
@@ -1352,6 +1353,15 @@ const bootstrap = async (): Promise<void> => {
   );
   remoteOperations.register("deleteProjectAutomation", (automationId) => controller.deleteProjectAutomation(automationId), validateSingleRemoteStringArg, "admin", true);
   remoteOperations.register("runProjectAutomationNow", (automationId) => controller.runProjectAutomationNow(automationId), validateSingleRemoteStringArg, "admin", true);
+  remoteOperations.register(
+    "answerAutomationQuestion",
+    (input) => controller.answerAutomationQuestion(input),
+    defineRemoteArgsValidator<"answerAutomationQuestion">((args) => args.length === 1 && isAnswerAutomationQuestionInput(args[0])),
+    "approval:respond",
+    true,
+  );
+  remoteOperations.register("retryAutomationWorkflowRun", (workflowRunId) => controller.retryAutomationWorkflowRun(workflowRunId), validateSingleRemoteStringArg, "admin", true);
+  remoteOperations.register("cancelAutomationWorkflowRun", (workflowRunId) => controller.cancelAutomationWorkflowRun(workflowRunId), validateSingleRemoteStringArg, "admin", true);
   remoteOperations.register("generateProjectInsight", (input) => controller.generateProjectInsight(input), validateProjectInsight, "admin", true);
   remoteOperations.register("queryProjectActivity", (input) => controller.queryProjectActivity(input), validateProjectActivityQuery);
   remoteOperations.register("runProjectLab", (input) => controller.runProjectLab(input), validateProjectLabRun, "admin", true);
@@ -1570,6 +1580,7 @@ const bootstrap = async (): Promise<void> => {
         hostEvents.subscribe("chat", (payload) => listener({ event: "chat", payload })),
         hostEvents.subscribe("warning", (payload) => listener({ event: "warning", payload })),
         hostEvents.subscribe("loop", (payload) => listener({ event: "loop", payload })),
+        hostEvents.subscribe("automation", (payload) => listener({ event: "automation", payload })),
         hostEvents.subscribe("task", (payload) => listener({ event: "task", payload })),
         hostEvents.subscribe("runOrganization", (payload) => listener({ event: "run-organization", payload })),
         hostEvents.subscribe("orchestration", (payload) => listener({ event: "orchestration", payload })),
@@ -1941,6 +1952,14 @@ const bootstrap = async (): Promise<void> => {
     controller.deleteProjectAutomation(automationId));
   ipcMain.handle(IPC_CHANNELS.runProjectAutomationNow, (_, automationId: string) =>
     controller.runProjectAutomationNow(automationId));
+  ipcMain.handle(IPC_CHANNELS.answerAutomationQuestion, (_, input: unknown) => {
+    if (!isAnswerAutomationQuestionInput(input)) throw new Error("Invalid automation answer.");
+    return controller.answerAutomationQuestion(input);
+  });
+  ipcMain.handle(IPC_CHANNELS.retryAutomationWorkflowRun, (_, workflowRunId: string) =>
+    controller.retryAutomationWorkflowRun(workflowRunId));
+  ipcMain.handle(IPC_CHANNELS.cancelAutomationWorkflowRun, (_, workflowRunId: string) =>
+    controller.cancelAutomationWorkflowRun(workflowRunId));
   ipcMain.handle(IPC_CHANNELS.getStartupAutomationCatchUp, () => controller.getStartupAutomationCatchUp());
   ipcMain.handle(IPC_CHANNELS.resolveStartupAutomationCatchUp, (_, automationIds: string[]) =>
     controller.resolveStartupAutomationCatchUp(automationIds));

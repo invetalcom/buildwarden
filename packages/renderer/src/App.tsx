@@ -1424,6 +1424,9 @@ export const App = () => {
     const unsubscribeLoopChanged = buildwarden.onProjectLoopChanged(() => {
       scheduleSnapshotRefresh();
     });
+    const unsubscribeAutomationWorkflowChanged = buildwarden.onAutomationWorkflowChanged(() => {
+      scheduleSnapshotRefresh();
+    });
     const unsubscribeOrchestrationChanged = buildwarden.onOrchestrationChanged((payload) => {
       scheduleSnapshotRefresh();
       if (payload.deletedRunIds?.length) {
@@ -1453,6 +1456,7 @@ export const App = () => {
       unsubscribeWarning();
       unsubscribeAutomationStarted();
       unsubscribeLoopChanged();
+      unsubscribeAutomationWorkflowChanged();
       unsubscribeOrchestrationChanged();
       unsubscribeForgeChanged();
     };

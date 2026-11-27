@@ -30,6 +30,8 @@ const COUNCIL_MAX_PARALLEL_REVIEWS = 4;
 const COUNCIL_MAX_ATTEMPTS = 2;
 const COUNCIL_REVIEW_OUTPUT_LIMIT = 32_000;
 const ELIGIBLE_RUN_KINDS: ReadonlySet<RunRecord["kind"]> = new Set(["standard", "automation"]);
+/** Loops start a review of their iteration runs themselves; it never starts on its own there. */
+const STARTABLE_RUN_KINDS: ReadonlySet<RunRecord["kind"]> = new Set([...ELIGIBLE_RUN_KINDS, "loop-iteration"]);
 
 export interface CouncilStore {
   saveCouncilRound(round: CouncilRound): void;
@@ -152,7 +154,7 @@ export class CouncilService {
   }
 
   private assertRunEligible(run: RunRecord): void {
-    if (!ELIGIBLE_RUN_KINDS.has(run.kind)) throw new Error("This kind of run cannot be validated.");
+    if (!STARTABLE_RUN_KINDS.has(run.kind)) throw new Error("This kind of run cannot be validated.");
     if (this.host.isRunBusy(run.id) || !canReviewRunChanges(run)) throw new Error("Wait for the run to finish before validating it.");
     if (this.store.listCouncilRounds(run.id).some(isCouncilRoundActive)) throw new Error("This run is already being validated.");
   }

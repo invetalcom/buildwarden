@@ -273,6 +273,9 @@ describe("ProjectLoopRunner", () => {
         return "Audit: everything merged cleanly.";
       },
       createForgeProvider: async () => fakeForgeProvider(),
+      startCouncil: async () => { throw new Error("No reviewers are configured."); },
+      applyCouncilFindings: async () => { throw new Error("No reviewers are configured."); },
+      verifyRun: async () => { throw new Error("Verification is not configured in this test."); },
       emitLoopChanged: () => undefined,
       logError: () => undefined,
       logWarn: () => undefined,
