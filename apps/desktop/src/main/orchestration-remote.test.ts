@@ -171,6 +171,13 @@ describe("delegating to a linked host", () => {
     expect(taskByClientId("t2").status).toBe("cancelled");
   });
 
+  it("refuses a remote task when the orchestration has a token budget", async () => {
+    const { db, coordinator, delegate, controller } = await setup();
+    const orchestration = serviceOf(controller, "orchestration").getOrCreateOrchestration(db.getRun(coordinator.id));
+    db.updateOrchestration(orchestration.id, { teamSnapshot: { ...orchestration.teamSnapshot, maxTotalTokens: 100_000 } });
+    await expect(delegate("t11")).resolves.toMatchObject({ ok: false, body: { error: { code: "model_unavailable", message: expect.stringContaining("reports no token usage") } } });
+  });
+
   it("fails the task when the host has no matching project, and rejects unknown hosts", async () => {
     const { delegate, taskByClientId } = await setup();
     await delegate("t3", { remoteProjectId: "missing-project" });

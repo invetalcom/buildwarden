@@ -66,6 +66,13 @@ export const parseDelegatedTasks = (rawTasks: unknown[], options: DelegatedTaskP
     if (!remote && !role.eligibleModelIds.includes(requestedModelId)) {
       throw new OrchestrationToolError("model_not_eligible", `Model "${requestedModelId}" is not eligible for role "${role.name}".`);
     }
+    // A linked host reports no token usage back, so its tasks cannot count against a budget either.
+    if (remote && options.orchestration.teamSnapshot.maxTotalTokens) {
+      throw new OrchestrationToolError(
+        "model_unavailable",
+        `Task ${index + 1}: a linked host reports no token usage, so this orchestration's token budget cannot limit it. Run the task here instead.`,
+      );
+    }
     if (!remote && options.orchestration.teamSnapshot.maxTotalTokens && options.modelReportsNoUsage(requestedModelId)) {
       throw new OrchestrationToolError(
         "model_unavailable",
