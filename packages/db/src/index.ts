@@ -5614,8 +5614,8 @@ export class BuildWardenDatabase {
   createRemoteAccessSession(record: RemoteAccessSessionRecord): void {
     this.run(
       `insert into remote_access_sessions (
-         id, token_hash, label, scopes_json, created_at, expires_at, last_used_at, revoked_at, client_origin
-       ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         id, token_hash, label, scopes_json, created_at, expires_at, last_used_at, revoked_at, client_origin, audience
+       ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         record.id,
         record.tokenHash,
@@ -5626,6 +5626,7 @@ export class BuildWardenDatabase {
         record.lastUsedAt,
         record.revokedAt,
         record.clientOrigin,
+        record.audience ?? null,
       ],
     );
   }
@@ -5641,17 +5642,19 @@ export class BuildWardenDatabase {
       lastUsedAt: string;
       revokedAt: string | null;
       clientOrigin: string | null;
+      audience: string | null;
     }>(
       `select id, token_hash as tokenHash, label, scopes_json as scopesJson, created_at as createdAt,
-              expires_at as expiresAt, last_used_at as lastUsedAt, revoked_at as revokedAt, client_origin as clientOrigin
+              expires_at as expiresAt, last_used_at as lastUsedAt, revoked_at as revokedAt, client_origin as clientOrigin,
+              audience
        from remote_access_sessions where token_hash = ?`,
       [tokenHash],
     );
     if (!row) {
       return null;
     }
-    const { scopesJson, ...session } = row;
-    return { ...session, scopes: this.parseRemoteAccessScopes(scopesJson) };
+    const { scopesJson, audience, ...session } = row;
+    return { ...session, scopes: this.parseRemoteAccessScopes(scopesJson), ...(audience === "mcp" ? { audience } : {}) };
   }
 
   listRemoteAccessSessions(): RemoteAccessSession[] {
@@ -5664,11 +5667,14 @@ export class BuildWardenDatabase {
       lastUsedAt: string;
       revokedAt: string | null;
       clientOrigin: string | null;
+      audience: string | null;
     }>(
       `select id, label, scopes_json as scopesJson, created_at as createdAt, expires_at as expiresAt,
-              last_used_at as lastUsedAt, revoked_at as revokedAt, client_origin as clientOrigin
+              last_used_at as lastUsedAt, revoked_at as revokedAt, client_origin as clientOrigin, audience
        from remote_access_sessions order by created_at desc`,
-    ).map(({ scopesJson, ...row }) => ({ ...row, scopes: this.parseRemoteAccessScopes(scopesJson) }));
+    ).map(({ scopesJson, audience, ...row }) => ({
+      ...row, scopes: this.parseRemoteAccessScopes(scopesJson), ...(audience === "mcp" ? { audience } : {}),
+    }));
   }
 
   touchRemoteAccessSession(sessionId: string, lastUsedAt: string): void {
@@ -7026,6 +7032,8 @@ export class BuildWardenDatabase {
     this.ensureAttachmentCountColumn("project_automations");
     this.ensureColumn("remote_pairing_grants", "client_origin", "text");
     this.ensureColumn("remote_access_sessions", "client_origin", "text");
+    // "mcp" for an agent token, which reaches only the MCP endpoint.
+    this.ensureColumn("remote_access_sessions", "audience", "text");
     this.ensureColumn("token_usage_events", "provider_type", "text");
     this.ensureColumn("token_usage_events", "model_id", "text");
     this.ensureColumn("token_usage_events", "cache_read_tokens", "integer not null default 0");

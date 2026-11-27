@@ -1798,7 +1798,8 @@ const bootstrap = async (): Promise<void> => {
     const auth = await ensureRemoteAuthService();
     const label = input?.label?.trim() || "Outside agent";
     const grant = auth.createPairingGrant({ label, ...(input?.scopes ? { scopes: input.scopes } : {}) });
-    const issued = auth.exchangePairingCode(grant.code, label, null);
+    // An agent token is for the MCP tools only; the app's RPC API would let it do more than they offer.
+    const issued = auth.exchangePairingCode(grant.code, label, null, null, { audience: "mcp" });
     if (!issued) throw new Error("The agent token could not be issued.");
     const tailscaleStatus = await tailscaleServe.getStatus(info.port);
     const endpoint = tailscaleStatus.verified && tailscaleStatus.endpoint ? tailscaleStatus.endpoint : info.baseUrl;

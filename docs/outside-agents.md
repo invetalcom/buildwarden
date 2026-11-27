@@ -33,5 +33,6 @@ it prints the URL, the token and the same command.
 | `cancel_run` | Start runs | Stop a run's current turn |
 
 Every tool runs a remote operation with the token's scopes, so a token cannot do more than a paired
-device with the same access. Approvals stay in BuildWarden: commands a run wants to execute wait for
-you there, and no token can answer them.
+device with the same access. An agent token works only on `/mcp`: the app's own remote API and event
+streams refuse it, so it can do no more than the tools above. Approvals stay in BuildWarden: commands
+a run wants to execute wait for you there, and no token can answer them.

@@ -6188,6 +6188,8 @@ export interface RemoteAccessSession {
   revokedAt: string | null;
   /** Null for the host-served same-origin cookie flow. */
   clientOrigin: string | null;
+  /** "mcp": an agent token, which reaches only the MCP endpoint and not the app's own remote API. */
+  audience?: "mcp";
 }
 
 export interface RemoteAccessSessionRecord extends RemoteAccessSession {

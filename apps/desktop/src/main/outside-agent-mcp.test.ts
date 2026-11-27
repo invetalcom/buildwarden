@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BuildWardenDatabase } from "@buildwarden/db";
 import { RemoteAccessServer, RemoteAuthService, RemoteOperationRegistry, validateNoRemoteArgs } from "@buildwarden/remote-server";
-import { REMOTE_ACCESS_MCP_PATH, type AppSnapshot, type RemoteAccessScope, type RunDetail, type RunInput, type RunRecord } from "@buildwarden/shared";
+import { REMOTE_ACCESS_MCP_PATH, REMOTE_ACCESS_PROTOCOL_VERSION, REMOTE_ACCESS_RPC_PATH, type AppSnapshot, type RemoteAccessScope, type RunDetail, type RunInput, type RunRecord } from "@buildwarden/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { OUTSIDE_AGENT_TOOLS, OutsideAgentMcp } from "./outside-agent-mcp";
 
@@ -142,5 +142,16 @@ describe("the remote access server's MCP endpoint", () => {
     await expect(listed.json()).resolves.toMatchObject({ id: 2, result: { isError: false, structuredContent: { projects: [{ id: "p1" }, { id: "p2" }] } } });
     expect(handle).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ scopes: ["state:read"] }));
     expect((await fetch(`${info.baseUrl}${REMOTE_ACCESS_MCP_PATH}`, { headers: { Authorization: `Bearer ${token}` } })).status).toBe(405);
+
+    // An agent token reaches the MCP tools only, not the RPC API its scopes would otherwise open.
+    const agentGrant = auth.createPairingGrant({ scopes: ["state:read", "run:operate"] });
+    const agentToken = auth.exchangePairingCode(agentGrant.code, "Agent", null, null, { audience: "mcp" })!.token;
+    const rpc = await fetch(`${info.baseUrl}${REMOTE_ACCESS_RPC_PATH}`, {
+      method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${agentToken}` },
+      body: JSON.stringify({ protocolVersion: REMOTE_ACCESS_PROTOCOL_VERSION, requestId: "r1", method: "getSnapshot", args: {} }),
+    });
+    expect(rpc.status).toBe(403);
+    expect((await post({ jsonrpc: "2.0", id: 3, method: "tools/list" }, agentToken)).status).toBe(200);
+    expect(db.listRemoteAccessSessions().find((session) => session.label === "Agent" && session.audience === "mcp")).toBeDefined();
   });
 });

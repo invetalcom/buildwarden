@@ -274,6 +274,8 @@ export class RemoteAuthService {
     label: string | undefined,
     remoteAddress: string | null,
     clientOrigin: string | null = null,
+    /** `audience: "mcp"` issues an agent token, which reaches only the MCP endpoint. */
+    options: { audience?: "mcp" } = {},
   ): RemoteAccessAuthenticatedSession | null {
     const normalizedCode = normalizePairingCode(code);
     const consumedAt = this.now();
@@ -301,6 +303,7 @@ export class RemoteAuthService {
       lastUsedAt: consumedAt.toISOString(),
       revokedAt: null,
       clientOrigin: grant.clientOrigin ?? null,
+      ...(options.audience ? { audience: options.audience } : {}),
     };
     this.options.store.createRemoteAccessSession(sessionRecord);
     this.audit("pairing-consumed", "success", {
@@ -1618,6 +1621,12 @@ export class RemoteAccessServer {
     session: RemoteAccessSession,
     startedAt: string,
   ): Promise<void> {
+    // An agent token reaches the MCP tools, and its own session; the app's RPC API stays out of
+    // reach, whatever its scopes would allow there.
+    if (session.audience === "mcp" && url.pathname !== REMOTE_ACCESS_MCP_PATH && url.pathname !== REMOTE_ACCESS_SESSION_PATH) {
+      writeJson(response, 403, { error: "This agent token works only on the MCP endpoint." });
+      return;
+    }
     if (request.method === "GET" && url.pathname === REMOTE_ACCESS_SESSION_PATH) {
       writeJson(response, 200, { session });
       return;
@@ -1865,7 +1874,7 @@ export class RemoteAccessServer {
         rejectUpgrade(socket, 401, "Unauthorized", "Authentication required.");
         return;
       }
-      if (!session.scopes.includes("state:read")) {
+      if (!session.scopes.includes("state:read") || session.audience === "mcp") {
         rejectUpgrade(socket, 403, "Forbidden", "The session cannot read event streams.");
         return;
       }
@@ -2025,7 +2034,8 @@ export class RemoteAccessServer {
       return;
     }
     const session = this.options.auth.authenticate(parsed.message.token, remoteAddress, { clientOrigin });
-    if (!session?.scopes.includes("state:read")) {
+    // An agent token reaches only the MCP endpoint, not the app's event streams.
+    if (!session?.scopes.includes("state:read") || session.audience === "mcp") {
       socket.close(1008, "Session is not authorized");
       return;
     }
@@ -2069,7 +2079,7 @@ export class RemoteAccessServer {
     clientOrigin: string | null,
   ): void {
     const session = this.options.auth.authenticate(token, remoteAddress, { clientOrigin });
-    if (!session?.scopes.includes("state:read")) {
+    if (!session?.scopes.includes("state:read") || session.audience === "mcp") {
       socket.close(1008, "Session is no longer authorized");
       return;
     }
