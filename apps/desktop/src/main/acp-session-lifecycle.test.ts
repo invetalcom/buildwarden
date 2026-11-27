@@ -49,7 +49,8 @@ createInterface({ input: process.stdin }).on("line", async (line) => {
   } else if (method === "session/fork") {
     send({ id, result: { sessionId: "forked-1" } });
   } else if (method === "session/resume") {
-    send({ id, result: {} });
+    if (process.env.FAKE_RESUME_FAILS) send({ id, error: { code: -32603, message: "cannot resume this one" } });
+    else send({ id, result: {} });
   } else if (method === "session/load") {
     update(params.sessionId, { sessionUpdate: "user_message_chunk", content: { type: "text", text: "Fix the " } });
     update(params.sessionId, { sessionUpdate: "user_message_chunk", content: { type: "text", text: "build" } });
@@ -138,6 +139,14 @@ describe("ACP session resume", () => {
     expect(result.summary).toBe("session=prior-1 fallback=false");
     expect(methods().map((entry) => entry.method)).toContain("session/resume");
     expect(methods().map((entry) => entry.method)).not.toContain("session/load");
+  });
+
+  it("loads the session when the agent offers both and cannot resume this one", async () => {
+    const { input, methods } = setup(["resume", "load"], ["FAKE_RESUME_FAILS=1"]);
+    const { result } = await run(new AcpHarnessAdapter(), { ...input, providerSessionRuntime: session({ sessionId: "prior-1" }) });
+    expect(result.summary).toBe("session=prior-1 fallback=false");
+    expect(methods().map((entry) => entry.method).filter((method) => method.startsWith("session/") && method !== "session/prompt"))
+      .toEqual(["session/resume", "session/load"]);
   });
 
   it("falls back to a fresh session with the conversation when nothing can reopen it", async () => {

@@ -826,41 +826,46 @@ export class AcpHarnessAdapter implements HarnessAdapter {
           resumeFailed = true;
           onChunk({ type: "status", title: "ACP session", value: `Started a new session; this agent cannot fork sessions.${fallbackNote}` });
         }
-      } else if (previousSessionId && agent.resumeSession) {
-        // Resuming reopens the session without replaying it.
-        settingsSessionId = previousSessionId;
-        try {
-          sessionState = await connection.request("session/resume", { sessionId: previousSessionId, cwd: input.worktreePath, mcpServers }, ACP_SESSION_LOAD_TIMEOUT_MS);
-          sessionId = previousSessionId;
-          continued = true;
-        } catch (error) {
-          settingsSessionId = null;
-          resumeFailed = true;
-          onChunk({
-            type: "status", title: "ACP session",
-            value: `Started a new session; the agent could not resume the previous one (${error instanceof Error ? error.message : String(error)}).${fallbackNote}`,
-          });
-        }
-      } else if (previousSessionId && agent.loadSession) {
-        // Loading replays the saved transcript as updates; the run already has those steps.
-        replaying = true;
-        settingsSessionId = previousSessionId;
-        try {
-          sessionState = await connection.request("session/load", { sessionId: previousSessionId, cwd: input.worktreePath, mcpServers }, ACP_SESSION_LOAD_TIMEOUT_MS);
-          sessionId = previousSessionId;
-          continued = true;
-        } catch (error) {
-          settingsSessionId = null;
-          resumeFailed = true;
-          onChunk({
-            type: "status", title: "ACP session",
-            value: `Started a new session; the agent could not reload the previous one (${error instanceof Error ? error.message : String(error)}).${fallbackNote}`,
-          });
-        } finally {
-          replaying = false;
-        }
       } else if (previousSessionId) {
-        resumeFailed = true;
+        const failures: string[] = [];
+        const describe = (error: unknown) => (error instanceof Error ? error.message : String(error));
+        if (agent.resumeSession) {
+          // Resuming reopens the session without replaying it.
+          settingsSessionId = previousSessionId;
+          try {
+            sessionState = await connection.request("session/resume", { sessionId: previousSessionId, cwd: input.worktreePath, mcpServers }, ACP_SESSION_LOAD_TIMEOUT_MS);
+            sessionId = previousSessionId;
+            continued = true;
+          } catch (error) {
+            settingsSessionId = null;
+            failures.push(`resume: ${describe(error)}`);
+          }
+        }
+        // An agent that cannot resume this session may still be able to load it.
+        if (!sessionId && agent.loadSession) {
+          // Loading replays the saved transcript as updates; the run already has those steps.
+          replaying = true;
+          settingsSessionId = previousSessionId;
+          try {
+            sessionState = await connection.request("session/load", { sessionId: previousSessionId, cwd: input.worktreePath, mcpServers }, ACP_SESSION_LOAD_TIMEOUT_MS);
+            sessionId = previousSessionId;
+            continued = true;
+          } catch (error) {
+            settingsSessionId = null;
+            failures.push(`reload: ${describe(error)}`);
+          } finally {
+            replaying = false;
+          }
+        }
+        if (!sessionId) {
+          resumeFailed = true;
+          if (failures.length > 0) {
+            onChunk({
+              type: "status", title: "ACP session",
+              value: `Started a new session; the agent could not continue the previous one (${failures.join("; ")}).${fallbackNote}`,
+            });
+          }
+        }
       }
       if (!sessionId) {
         // A failed load may have replayed settings belonging to the old session.
