@@ -14,7 +14,11 @@ export const withRunFailureStep = (
   const message = run.errorMessage?.trim();
   if (run.status !== "failed" || !message) return steps;
   // Only a step that carries the whole reason counts: "exited with code 1" must not hide "exited with code 127".
-  const alreadyShown = steps.some((step) => step.eventType === "error" && step.content.includes(message));
+  // A status or error step written when the run failed closes the turn and explains it in its own
+  // words, such as "Verification gate failed" or "Autonomy budget exhausted".
+  const alreadyShown = steps.some((step) =>
+    (step.eventType === "error" && step.content.includes(message))
+    || (run.finishedAt !== null && (step.eventType === "error" || step.eventType === "status") && step.createdAt >= run.finishedAt));
   if (alreadyShown) return steps;
   return [
     ...steps,

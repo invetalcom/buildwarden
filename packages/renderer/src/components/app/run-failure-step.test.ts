@@ -44,6 +44,17 @@ describe("withRunFailureStep", () => {
     expect(withRunFailureStep(failed, steps)).toHaveLength(2);
   });
 
+  it("keeps the steps when a closing step written at failure explains it in other words", () => {
+    const verification = { ...run, errorMessage: "Verification failed: pnpm test" };
+    const closing = { ...step("status", "The agent turn finished, but the verification gate failed at: pnpm test.", "Verification gate failed"), createdAt: run.finishedAt };
+    expect(withRunFailureStep(verification, [step("output", "Done."), closing])).toEqual([step("output", "Done."), closing]);
+  });
+
+  it("adds the reason when the only status steps came before the failure", () => {
+    const steps = [step("status", "Workspace ready")];
+    expect(withRunFailureStep(run, steps)).toHaveLength(2);
+  });
+
   it("leaves runs alone that did not fail or have no reason", () => {
     const steps = [step("output", "Done.")];
     expect(withRunFailureStep({ ...run, status: "completed" }, steps)).toBe(steps);
