@@ -649,6 +649,8 @@ export const App = () => {
    */
   const snapshotRefreshTimerRef = useRef<number | null>(null);
   const snapshotRefreshDueAtRef = useRef(0);
+  // A refresh scheduled before a client switch still fires afterwards and must reload from the new client.
+  const loadSnapshotRef = useLatestRef(loadSnapshot);
   const scheduleSnapshotRefresh = useCallback((delayMs = SNAPSHOT_REFRESH_DELAY_MS) => {
     const dueAt = Date.now() + delayMs;
     if (snapshotRefreshTimerRef.current !== null) {
@@ -660,11 +662,11 @@ export const App = () => {
     snapshotRefreshDueAtRef.current = dueAt;
     snapshotRefreshTimerRef.current = window.setTimeout(() => {
       snapshotRefreshTimerRef.current = null;
-      loadSnapshot().catch((caught: unknown) => {
+      loadSnapshotRef.current().catch((caught: unknown) => {
         setError(caught instanceof Error ? caught.message : "Unexpected error");
       });
     }, delayMs);
-  }, [loadSnapshot]);
+  }, [loadSnapshotRef]);
 
   const {
     detail: chatDetail,
