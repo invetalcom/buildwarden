@@ -486,7 +486,7 @@ export const OrchestrationSettingsTab = ({
           {draft.roles.length === 0 ? (
             <div className="px-4 py-6 text-center text-sm text-[var(--ec-muted)]">
               {selectedModelIds.size === 0
-                ? "Enable at least one model, then add a role."
+                ? "Delegation uses one General role over every enabled model. Select models above to build your own roles."
                 : "Add a predefined role or create a custom role. Until then, delegation uses one General role over every enabled model."}
             </div>
           ) : draft.roles.map((role) => (
@@ -618,9 +618,10 @@ export const OrchestrationSettingsTab = ({
             <p className="border-t border-[var(--ec-border)] px-4 py-2 text-[11px] text-[var(--ec-faint)]">
               The admin scope is required to edit orchestration settings.
             </p>
-          ) : validRoleCount === 0 ? (
+          ) : draft.roles.length > 0 && validRoleCount === 0 ? (
+            // Without any roles, delegation uses the General role; only roles that are all invalid block it.
             <p className="border-t border-[var(--ec-border)] px-4 py-2 text-[11px] text-[var(--ec-danger)]">
-              Add a valid role before enabling delegation.
+              No role is valid, so delegation cannot be enabled. Fix a role, or remove them all to use the General role.
             </p>
           ) : null}
         </CardContent>
