@@ -360,8 +360,8 @@ describe("delegating to a linked host", () => {
     expect(taskByClientId("t19").remote).toMatchObject({ stopPending: false });
   });
 
-  it("records a failed start and its host run's stop once storage recovers", async () => {
-    const { db, controller, host, delegate, taskByClientId, remote } = await setup();
+  it("records a failed start and its host run's stop once storage recovers, and wakes the coordinator", async () => {
+    const { db, controller, host, delegate, taskByClientId, remote, wake } = await setup();
     const linkedHosts = serviceOf(controller, "linkedHosts");
     const call = linkedHosts.callHostTool.bind(linkedHosts);
     let hostAway = true;
@@ -379,11 +379,15 @@ describe("delegating to a linked host", () => {
     const unsavedStops = (remote as unknown as { unsavedStops: Map<string, unknown> }).unsavedStops;
     await delegate("t20");
     await vi.waitFor(() => expect(unsavedStops.size).toBe(1));
+    // The failed save recorded the failure but skipped the wake that follows it.
+    expect(taskByClientId("t20").status).toBe("failed");
     storageDown = false;
     vi.mocked(db.flushDurable).mockImplementation(save);
+    wake.mockClear();
     await remote.pollRemoteTasks();
     expect(unsavedStops.size).toBe(0);
     expect(taskByClientId("t20")).toMatchObject({ status: "failed", remote: { runId: "host-run-1", stopPending: true } });
+    expect(wake).toHaveBeenCalledWith(taskByClientId("t20").orchestrationId);
     hostAway = false;
     await remote.pollRemoteTasks();
     expect(host.cancelled).toEqual(["host-run-1"]);

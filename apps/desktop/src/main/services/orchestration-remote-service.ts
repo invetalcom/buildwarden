@@ -172,9 +172,12 @@ export class OrchestrationRemoteService extends AppService<"linkedHosts" | "orch
       try {
         await this.settle(task.id, failure);
       } catch (settleError) {
-        // A retried settlement returns early once the failure is recorded, so the stop is saved
-        // after it on its own as well.
-        this.unsavedStops.set(task.id, { task: pendingStop, save: async () => { await this.settle(task.id, failure); return this.savePendingStop(pendingStop); } });
+        // A retried settlement returns early when the failed save had recorded the failure already.
+        // The wake and the change it skipped then come with the stop, once that save succeeds.
+        this.unsavedStops.set(task.id, {
+          task: pendingStop,
+          save: async () => this.savePendingStop(pendingStop, { announce: !await this.settle(task.id, failure) }),
+        });
         this.logControllerWarn("Could not record a remote task whose host run was started. BuildWarden keeps retrying the save and the stop while it runs; a restart before either succeeds would lose the run.", { taskId: task.id, hostRunId: startedRemote.runId, error: settleError });
       }
     }
@@ -191,18 +194,21 @@ export class OrchestrationRemoteService extends AppService<"linkedHosts" | "orch
     return match.id;
   }
 
-  /** Records a remote task's outcome as its published result and wakes the coordinator. */
+  /**
+   * Records a remote task's outcome as its published result and wakes the coordinator. False when
+   * there was nothing to record: the task is gone or had ended already.
+   */
   private async settle(
     taskId: string,
     outcome: { status: OrchestrationTaskStatus; summary: string | null; errorMessage: string | null; remote?: OrchestrationTaskRemote },
-  ): Promise<void> {
+  ): Promise<boolean> {
     // A task deleted with its orchestration has nothing left to record.
     const found = this.db.findOrchestrationTask(taskId);
-    if (!found) return;
+    if (!found) return false;
     const { orchestrationId } = found;
-    await this.services.orchestration.withOrchestrationMutation(orchestrationId, async () => {
+    return this.services.orchestration.withOrchestrationMutation(orchestrationId, async () => {
       const task = this.db.findOrchestrationTask(taskId);
-      if (!task || ["completed", "failed", "cancelled", "interrupted"].includes(task.status)) return;
+      if (!task || ["completed", "failed", "cancelled", "interrupted"].includes(task.status)) return false;
       this.db.transaction(() => {
         const updated = this.db.updateOrchestrationTask(task.id, {
           status: outcome.status, summary: outcome.summary, errorMessage: outcome.errorMessage,
@@ -222,6 +228,7 @@ export class OrchestrationRemoteService extends AppService<"linkedHosts" | "orch
       await this.db.flushDurable();
       await this.services.orchestrationCoordinator.maybeWakeOrchestrationCoordinator(orchestrationId);
       this.services.orchestration.emitOrchestrationChanged(orchestrationId, taskId);
+      return true;
     });
   }
 
@@ -305,12 +312,19 @@ export class OrchestrationRemoteService extends AppService<"linkedHosts" | "orch
     }
   }
 
-  /** Saves a host run's pending stop on its task. False when the task is gone and cannot hold it. */
-  private savePendingStop(task: OrchestrationTaskRecord): Promise<boolean> {
+  /**
+   * Saves a host run's pending stop on its task. False when the task is gone and cannot hold it.
+   * With `announce`, the task's recorded outcome also wakes the coordinator once it is durable.
+   */
+  private savePendingStop(task: OrchestrationTaskRecord, options: { announce?: boolean } = {}): Promise<boolean> {
     return this.services.orchestration.withOrchestrationMutation(task.orchestrationId, async () => {
       if (!this.db.findOrchestrationTask(task.id)) return false;
       this.db.updateOrchestrationTask(task.id, { remote: task.remote });
       await this.db.flushDurable();
+      if (options.announce) {
+        await this.services.orchestrationCoordinator.maybeWakeOrchestrationCoordinator(task.orchestrationId);
+        this.services.orchestration.emitOrchestrationChanged(task.orchestrationId, task.id);
+      }
       return true;
     });
   }
