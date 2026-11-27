@@ -146,7 +146,7 @@ describe("ACP agent without HTTP MCP", () => {
     const { input, entries } = setup();
     const tools = bridgeTools();
     const chunks: HarnessRunChunk[] = [];
-    const result = await new AcpHarnessAdapter(async () => "allow-once", () => relayLaunch)
+    const result = await new AcpHarnessAdapter(async () => "allow-once", { resolveStdioRelay: () => relayLaunch })
       .run(input, tools, (chunk) => chunks.push(chunk), new AbortController().signal);
     expect(result.summary).toBe("done");
     const [servers, answers] = entries();
@@ -166,7 +166,7 @@ describe("ACP agent without HTTP MCP", () => {
   it("still reports the tools as unavailable when no relay is configured", async () => {
     const { input } = setup();
     const chunks: HarnessRunChunk[] = [];
-    await new AcpHarnessAdapter(async () => "allow-once", () => null)
+    await new AcpHarnessAdapter(async () => "allow-once", { resolveStdioRelay: () => null })
       .run({ ...input, mcpServers: [] }, bridgeTools(), (chunk) => chunks.push(chunk), new AbortController().signal);
     expect(chunks.some((chunk) => chunk.type === "error" && chunk.value.includes("does not accept HTTP MCP servers"))).toBe(true);
   });

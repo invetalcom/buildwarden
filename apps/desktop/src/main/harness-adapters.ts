@@ -11,6 +11,9 @@ import type {
 export interface HarnessAdapterOptions {
   requestShellApproval?: ApprovalRequester;
   requestUserInput?: (request: RunUserInputRequest) => Promise<RunUserInputAnswers>;
+  /** BuildWarden's shell policy, for harnesses that run an agent's commands in BuildWarden's own terminals. */
+  authorizeShellCommand?: (commandLine: string, options: { yoloMode: boolean }) => Promise<void>;
+  shellEnv?: NodeJS.ProcessEnv;
 }
 
 export const getHarnessTypeForProvider = (providerType: ProviderType): HarnessType => {
@@ -40,7 +43,10 @@ export const createHarnessAdapter = async (providerType: ProviderType, options: 
     case "cursor-agent":
       return new (await loadCursorProvider()).CursorAgentHarnessAdapter(options.requestShellApproval, options.requestUserInput);
     case "acp":
-      return new (await loadAcpProvider()).AcpHarnessAdapter(options.requestShellApproval);
+      return new (await loadAcpProvider()).AcpHarnessAdapter(options.requestShellApproval, {
+        ...(options.authorizeShellCommand ? { authorizeShellCommand: options.authorizeShellCommand } : {}),
+        ...(options.shellEnv ? { shellEnv: options.shellEnv } : {}),
+      });
     case "azure-legacy":
       return new (await loadAzureLegacyProvider()).AzureLegacyHarnessAdapter();
     case "ai-sdk":

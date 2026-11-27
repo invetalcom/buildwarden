@@ -23,7 +23,7 @@ const SUSPICIOUS_WRITE_PLACEHOLDER_PATTERNS = [
   /^unchanged$/i,
 ];
 
-const buildAgentShellEnv = (): NodeJS.ProcessEnv => {
+export const buildAgentShellEnv = (): NodeJS.ProcessEnv => {
   const env: NodeJS.ProcessEnv = { ...process.env };
   const hasCiKey = Object.keys(env).some((key) => key.toLowerCase() === "ci");
   if (!hasCiKey) {
@@ -882,6 +882,36 @@ type RunToolContextOptions = {
   yoloMode?: boolean;
 };
 
+/**
+ * BuildWarden's shell policy, for every command an agent runs through BuildWarden: shell operators
+ * are refused, allowlisted commands run, and everything else needs the user's approval. Full Access
+ * skips all of it. Throws with a message for the agent when the command may not run.
+ */
+export const authorizeShellCommand = async (
+  command: string,
+  options: {
+    requestShellApproval?: (command: string) => Promise<ShellApprovalDecision>;
+    shellAllowlistExtra?: string[];
+    yoloMode?: boolean;
+  },
+): Promise<void> => {
+  const trimmed = command.trim();
+  if (options.yoloMode === true) return;
+  if (findDisallowedShellOperator(trimmed)) {
+    throw new Error(buildDisallowedShellOperatorsMessage(trimmed));
+  }
+  if (compileShellAllowlistRegExes(options.shellAllowlistExtra).some((pattern) => pattern.test(trimmed))) return;
+  if (!options.requestShellApproval) {
+    throw new Error(
+      `Command is not allowed: ${trimmed}. Use built-in safe commands, add regex patterns in Settings → GIT & Workspace → Shell allowlist, or approve when prompted.`,
+    );
+  }
+  const decision = await options.requestShellApproval(trimmed);
+  if (decision === "deny") {
+    throw new Error(`Command was denied by the user: ${trimmed}`);
+  }
+};
+
 const runSafeCommand = async (
   worktreePath: string,
   command: string,
@@ -895,24 +925,7 @@ const runSafeCommand = async (
 ): Promise<{ content: string; metadata: Record<string, unknown> }> => {
   const trimmed = command.trim();
   const yoloMode = options?.yoloMode === true;
-  if (!yoloMode && findDisallowedShellOperator(trimmed)) {
-    throw new Error(buildDisallowedShellOperatorsMessage(trimmed));
-  }
-
-  const allowedCommands = compileShellAllowlistRegExes(shellAllowlistExtra);
-
-  if (!yoloMode && !allowedCommands.some((pattern) => pattern.test(trimmed))) {
-    if (!requestShellApproval) {
-      throw new Error(
-        `Command is not allowed: ${trimmed}. Use built-in safe commands, add regex patterns in Settings → GIT & Workspace → Shell allowlist, or approve when prompted.`,
-      );
-    }
-
-    const decision = await requestShellApproval(trimmed);
-    if (decision === "deny") {
-      throw new Error(`Command was denied by the user: ${trimmed}`);
-    }
-  }
+  await authorizeShellCommand(trimmed, { requestShellApproval, shellAllowlistExtra, yoloMode });
 
   return await new Promise((resolve) => {
     let settled = false;

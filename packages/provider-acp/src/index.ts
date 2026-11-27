@@ -38,6 +38,9 @@ import { AcpConnection, AcpRequestError, parseAcpEnvironment, resolveAcpLaunch, 
 export { AcpConnection, AcpRequestError, parseAcpCommandLine, parseAcpEnvironment, resolveAcpLaunch } from "./connection";
 
 import { AcpSessionSettings, isAcpInspectMode } from "./session-settings";
+import { AcpTerminals, type AcpTerminalSnapshot } from "./terminals";
+
+export { AcpTerminals, terminalCommandLine } from "./terminals";
 
 export { ACP_DEFAULT_MODEL_ID };
 const ACP_PROTOCOL_VERSION = 1;
@@ -98,10 +101,10 @@ const acpSessionCapabilities = (agent: AcpAgentCapabilities, stdioRelay = false)
 });
 
 /** Advertises only the file access this connection serves; the agent relies on what it is told. */
-const initializeAgent = async (connection: AcpConnection, access: { read: boolean; write: boolean }, config?: Record<string, unknown>) => {
+const initializeAgent = async (connection: AcpConnection, access: { read: boolean; write: boolean; terminal?: boolean }, config?: Record<string, unknown>) => {
   const initialized = await connection.request("initialize", {
   protocolVersion: ACP_PROTOCOL_VERSION,
-  clientCapabilities: { fs: { readTextFile: access.read, writeTextFile: access.write }, terminal: false },
+  clientCapabilities: { fs: { readTextFile: access.read, writeTextFile: access.write }, terminal: access.terminal === true },
   clientInfo: { name: "buildwarden", title: "BuildWarden", version: "1.0.0" },
 }, ACP_INITIALIZE_TIMEOUT_MS);
   const methodId = config?.[PROVIDER_CONFIG_ACP_AUTH_METHOD_KEY];
@@ -227,11 +230,34 @@ const toolCallApprovalIdentity = (toolCall: Record<string, unknown>): string | n
   return `${describeToolCall(toolCall)} #${createHash("sha256").update(stableJson(rawInput)).digest("hex").slice(0, 16)}`;
 };
 
-const toolContentText = (content: unknown): string => {
+/** Terminal output shown in a tool step; the agent receives the whole buffer through terminal/output. */
+const MAX_TERMINAL_STEP_CHARS = 16_000;
+
+const terminalStepText = (terminal: AcpTerminalSnapshot): string => {
+  const output = terminal.output.length > MAX_TERMINAL_STEP_CHARS
+    ? `…${terminal.output.slice(-MAX_TERMINAL_STEP_CHARS)}`
+    : terminal.output;
+  const status = terminal.exitStatus
+    ? `\n[exit ${terminal.exitStatus.exitCode ?? terminal.exitStatus.signal ?? "?"}]`
+    : "";
+  return `$ ${terminal.commandLine}\n${output.trimEnd() || "(waiting for output…)"}${status}`;
+};
+
+/** The terminals a tool call's content embeds. */
+const toolTerminalIds = (content: unknown): string[] =>
+  Array.isArray(content)
+    ? content.filter(isRecord).flatMap((entry) => (entry.type === "terminal" && typeof entry.terminalId === "string" ? [entry.terminalId] : []))
+    : [];
+
+const toolContentText = (content: unknown, terminal?: (terminalId: string) => AcpTerminalSnapshot | null): string => {
   if (!Array.isArray(content)) return "";
   return content.filter(isRecord).map((entry) => {
     if (entry.type === "content" && isRecord(entry.content) && typeof entry.content.text === "string") return entry.content.text;
     if (entry.type === "diff" && typeof entry.path === "string") return `Edited ${entry.path}`;
+    if (entry.type === "terminal" && typeof entry.terminalId === "string") {
+      const snapshot = terminal?.(entry.terminalId);
+      return snapshot ? terminalStepText(snapshot) : "";
+    }
     return "";
   }).filter(Boolean).join("\n");
 };
@@ -310,16 +336,58 @@ class BridgeCallLedger {
   }
 }
 
+export interface AcpHarnessOptions {
+  /** How to start the stdio MCP relay; read from the environment by default. */
+  resolveStdioRelay?: () => McpStdioRelayLaunch | null;
+  /**
+   * BuildWarden's shell policy (operators, allowlist, approval) for commands the agent runs in
+   * BuildWarden's terminals. Throws when a command may not run. Without it, every command needs
+   * the user's approval.
+   */
+  authorizeShellCommand?: (commandLine: string, options: { yoloMode: boolean }) => Promise<void>;
+  /** The environment terminals start with. */
+  shellEnv?: NodeJS.ProcessEnv;
+}
+
+/** Commands compare with their spacing collapsed, and nothing else changed. */
+const normalizeCommandLine = (value: string): string => value.trim().replace(/\s+/g, " ");
+
+/**
+ * The forms in which an approved command may reach a terminal. An executable with arguments runs
+ * them literally, so it also matches the words joined as the agent showed them. Shell source must
+ * match exactly: quotes there decide what runs.
+ */
+const terminalCommandForms = (commandLine: string, request: { command: string; args: string[] }): string[] => [
+  normalizeCommandLine(commandLine),
+  ...(request.args.length > 0 ? [normalizeCommandLine([request.command, ...request.args].join(" "))] : []),
+];
+
 const fallbackContextBlock = (context: string) =>
   `<earlier_conversation>\nThe agent could not reload its saved session, so this is the conversation so far.\n${context}\n</earlier_conversation>`;
 
 export class AcpHarnessAdapter implements HarnessAdapter {
   readonly harnessType = "acp" as const;
 
+  private readonly resolveStdioRelay: () => McpStdioRelayLaunch | null;
+
   constructor(
     private readonly requestShellApproval?: ApprovalRequester,
-    private readonly resolveStdioRelay: () => McpStdioRelayLaunch | null = resolveMcpStdioRelayLaunch,
-  ) {}
+    private readonly options: AcpHarnessOptions = {},
+  ) {
+    this.resolveStdioRelay = options.resolveStdioRelay ?? resolveMcpStdioRelayLaunch;
+  }
+
+  /** BuildWarden's shell policy for a command the agent runs in one of BuildWarden's terminals. */
+  private async authorizeCommand(commandLine: string, yoloMode: boolean): Promise<void> {
+    if (this.options.authorizeShellCommand) {
+      await this.options.authorizeShellCommand(commandLine, { yoloMode });
+      return;
+    }
+    if (yoloMode) return;
+    if (!this.requestShellApproval || await this.requestShellApproval(commandLine) === "deny") {
+      throw new Error(`Command was denied by the user: ${commandLine}`);
+    }
+  }
 
   async run(
     input: RunExecutionRequest,
@@ -354,6 +422,39 @@ export class AcpHarnessAdapter implements HarnessAdapter {
     const bridgeCalls = new BridgeCallLedger();
     /** Calls titled as BuildWarden tools that ran, but that the bridge has not vouched for yet. */
     const unverifiedBridgeCalls = new Map<string, { toolName: string; state: Record<string, unknown> }>();
+    // Full Access never reaches past an inspect-only turn: its commands keep the allowlist and approvals.
+    const shellYolo = input.yoloMode === true && writable;
+    /** Commands of execute calls BuildWarden approved this turn; the terminal that runs one is not asked about again. */
+    const approvedCommands: string[] = [];
+    /** Each BuildWarden terminal and the tool call that shows it. */
+    const terminalToolCalls = new Map<string, string>();
+    const toolEmitTimers = new Map<string, ReturnType<typeof setTimeout>>();
+    let emitToolChunk: (id: string) => void = () => undefined;
+    const scheduleToolEmit = (id: string) => {
+      if (toolEmitTimers.has(id)) return;
+      toolEmitTimers.set(id, setTimeout(() => {
+        toolEmitTimers.delete(id);
+        emitToolChunk(id);
+      }, 150));
+    };
+    const terminals = new AcpTerminals({
+      workspace: input.worktreePath,
+      resolveCwd: (requested) => resolveWorkspacePath(input.worktreePath, requested),
+      ...(this.options.shellEnv ? { env: this.options.shellEnv } : {}),
+      authorize: async (commandLine, request) => {
+        const forms = terminalCommandForms(commandLine, request);
+        const approved = approvedCommands.findIndex((command) => forms.includes(command));
+        if (approved >= 0) {
+          approvedCommands.splice(approved, 1);
+          return;
+        }
+        await this.authorizeCommand(commandLine, shellYolo);
+      },
+      onOutput: (terminalId) => {
+        const toolCallId = terminalToolCalls.get(terminalId);
+        if (toolCallId) scheduleToolEmit(toolCallId);
+      },
+    });
     const readOnlyViolationMessage = (toolCall: Record<string, unknown>) =>
       `The ACP agent ran "${describeToolCall(toolCall)}" without BuildWarden's permission in an inspect-only turn. BuildWarden stopped the turn; configure the agent to ask before edits, commands and MCP tools.`;
     let cancelTimer: ReturnType<typeof setTimeout> | undefined;
@@ -374,7 +475,7 @@ export class AcpHarnessAdapter implements HarnessAdapter {
     try {
       signal.throwIfAborted();
       connection.start();
-      const agent = readAgentCapabilities(await initializeAgent(connection, { read: true, write: writable }, input.config));
+      const agent = readAgentCapabilities(await initializeAgent(connection, { read: true, write: writable, terminal: true }, input.config));
       onChunk({
         type: "status",
         title: "ACP session capabilities",
@@ -431,6 +532,21 @@ export class AcpHarnessAdapter implements HarnessAdapter {
             const allowOnce = pickPermissionOption(params, ["allow_once"]);
             if (allowOnce) return permissionOutcome(allowOnce);
           }
+          // A command gets the same shell policy as run_shell in an inspect turn: allowlisted
+          // commands run, others need the user's approval.
+          const command = kind === "execute" ? toolCallCommand(merged) : undefined;
+          const allowOnce = pickPermissionOption(params, ["allow_once"]);
+          if (command && allowOnce && toolCallId) {
+            try {
+              await this.authorizeCommand(command, false);
+            } catch {
+              return permissionOutcome(pickPermissionOption(params, ["reject_once", "reject_always"]));
+            }
+            if (signal.aborted) return permissionOutcome(undefined);
+            grantedToolCalls.add(toolCallId);
+            approvedCommands.push(normalizeCommandLine(command));
+            return permissionOutcome(allowOnce);
+          }
           return permissionOutcome(pickPermissionOption(params, ["reject_once", "reject_always"]));
         }
         const description = describeToolCall(merged);
@@ -448,6 +564,8 @@ export class AcpHarnessAdapter implements HarnessAdapter {
         }
         const allow = () => {
           if (toolCallId) grantedToolCalls.add(toolCallId);
+          const command = kind === "execute" ? toolCallCommand(merged) : undefined;
+          if (command) approvedCommands.push(normalizeCommandLine(command));
           return permissionOutcome(allowOnce);
         };
         if (input.yoloMode === true) return allow();
@@ -479,6 +597,23 @@ export class AcpHarnessAdapter implements HarnessAdapter {
         await writeFile(target, params.content, "utf8");
         return null;
       });
+      connection.handleRequest("terminal/create", (raw) => terminals.create(raw));
+      connection.handleRequest("terminal/output", (raw) => terminals.output(raw));
+      connection.handleRequest("terminal/wait_for_exit", (raw) => terminals.waitForExit(raw));
+      connection.handleRequest("terminal/kill", (raw) => terminals.kill(raw));
+      connection.handleRequest("terminal/release", (raw) => terminals.release(raw));
+      emitToolChunk = (id) => {
+        const state = tools.get(id);
+        if (!state || replaying) return;
+        const status = asString(state.status) ?? "pending";
+        const finished = status === "completed" || status === "failed";
+        onChunk({
+          type: finished ? "tool-result" : "tool-progress",
+          title: `Tool: ${asString(state.title) ?? asString(state.kind) ?? "tool"}`,
+          value: toolContentText(state.content, (terminalId) => terminals.snapshot(terminalId)) || describeToolCall(state),
+          metadata: { provider: "acp", toolName: asString(state.kind) ?? "tool", callId: id, ok: status !== "failed", streamId: `acp-tool-${id}`, replace: true },
+        });
+      };
       connection.handleNotification("session/update", (raw) => {
         if (!isRecord(raw) || !isRecord(raw.update)) return;
         const update = raw.update;
@@ -528,6 +663,12 @@ export class AcpHarnessAdapter implements HarnessAdapter {
             }
             const status = asString(state.status) ?? "pending";
             const toolKind = asString(state.kind) ?? "other";
+            for (const terminalId of toolTerminalIds(state.content)) {
+              if (!terminals.snapshot(terminalId)) continue;
+              terminalToolCalls.set(terminalId, id);
+              // BuildWarden's shell policy let this command start, so the command call is approved.
+              if (toolKind === "execute") grantedToolCalls.add(id);
+            }
             if (!writable && !readOnlyViolation && !INSPECT_TOOL_KINDS.has(toolKind) && !grantedToolCalls.has(id)) {
               // The agent ran a tool this turn rejects without BuildWarden's approval: it skipped
               // the permission prompt, or went ahead after a rejection. Stop the turn, and close
@@ -554,13 +695,7 @@ export class AcpHarnessAdapter implements HarnessAdapter {
                 unverifiedBridgeCalls.delete(id);
               }
             }
-            const finished = status === "completed" || status === "failed";
-            onChunk({
-              type: finished ? "tool-result" : "tool-progress",
-              title: `Tool: ${asString(state.title) ?? asString(state.kind) ?? "tool"}`,
-              value: toolContentText(state.content) || describeToolCall(state),
-              metadata: { provider: "acp", toolName: asString(state.kind) ?? "tool", callId: id, ok: status !== "failed", streamId: `acp-tool-${id}`, replace: true },
-            });
+            emitToolChunk(id);
             return;
           }
           case "plan": {
@@ -704,6 +839,10 @@ export class AcpHarnessAdapter implements HarnessAdapter {
             ok: false, streamId: `acp-tool-${id}`, replace: true, endedReason: signal.aborted ? "cancelled" : "turn-ended" },
         });
       }
+      for (const timer of toolEmitTimers.values()) clearTimeout(timer);
+      toolEmitTimers.clear();
+      emitToolChunk = () => undefined;
+      await terminals.closeAll().catch(() => undefined);
       await bridge?.close().catch(() => undefined);
       // A cancelled turn stops everything it started, and so does one stopped for running a
       // command without permission; only a turn that finished normally leaves its servers running.
