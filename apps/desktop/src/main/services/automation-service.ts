@@ -297,7 +297,11 @@ export class AutomationService extends AppService<
     ) || this.services.automationWorkflows.hasActiveWorkflowRun(automation.id);
     // A one-time automation has a single occurrence; skipping it would silently lose the run.
     // Issue and pull request triggers start once per item, so they never wait either.
-    const waitsForPrevious = trigger.kind === "automation-finished" || (trigger.kind === "schedule" && automation.scheduleKind === "cron");
+    // Run now honors "Wait for previous run" wherever the editor offers it.
+    const offersWaitForPrevious = automation.trigger.kind === "automation-finished" ||
+      (automation.trigger.kind === "schedule" && automation.scheduleKind === "cron");
+    const waitsForPrevious = trigger.kind === "automation-finished" || (trigger.kind === "schedule" && automation.scheduleKind === "cron") ||
+      (trigger.kind === "now" && offersWaitForPrevious);
     if (waitsForPrevious && automation.onlyIfPreviousFinished && previousActive) return null;
     if (isAutomationWorkflow(automation.workflow) || trigger.kind === "issue-labelled" || trigger.kind === "pr-opened" ||
       trigger.kind === "automation-finished") {
