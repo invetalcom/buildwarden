@@ -6,11 +6,14 @@ const LOOP_VERIFICATION_FIX_ATTEMPTS = 2;
 
 /** What the checks before a loop's pull request need from the loop runner. */
 export interface LoopPrCheckHost {
-  listCouncilRounds(runId: string): CouncilRound[];
+  /** The run's latest council round, with `stale` set when the workspace changed since it started. */
+  latestCouncilRound(runId: string): Promise<CouncilRound | undefined>;
   getCouncilRound(roundId: string): CouncilRound;
   startCouncil(runId: string): Promise<CouncilRound>;
   applyCouncilFindings(roundId: string, groupIds: string[]): Promise<CouncilRound>;
   verifyRun(runId: string): Promise<RunVerificationState>;
+  /** True when the run's current revision already passed verification. */
+  verificationIsCurrent(runId: string): Promise<boolean>;
   /** Sends a fix turn to the iteration's run and resolves once it ended. */
   followUpAndWait(runId: string, prompt: string): Promise<RunRecord>;
   sleep(ms: number): Promise<void>;
@@ -28,24 +31,36 @@ const waitForRound = async (host: LoopPrCheckHost, roundId: string): Promise<Cou
 };
 
 /**
- * Council review of the iteration's changes. Recommended findings go back to the agent. A review that cannot
- * finish (no reviewers, usage limits) is reported and does not hold up the loop.
+ * A round a resumed loop can keep instead of reviewing again: one still working, one whose findings were
+ * applied (applying always changes what it reviewed), or a finished one whose subject is unchanged.
  */
-const runCouncilCheck = async (host: LoopPrCheckHost, run: RunRecord): Promise<void> => {
+const reusableRound = (round: CouncilRound | undefined): CouncilRound | undefined => {
+  if (!round) return undefined;
+  if (isCouncilRoundActive(round) || round.status === "applied") return round;
+  return round.status === "ready" && !round.stale ? round : undefined;
+};
+
+/**
+ * Council review of the iteration's changes. Recommended findings go back to the agent. A review that cannot
+ * finish (no reviewers, usage limits) is reported and does not hold up the loop. True when it changed the code.
+ */
+const runCouncilCheck = async (host: LoopPrCheckHost, run: RunRecord): Promise<boolean> => {
   let round: CouncilRound;
+  let resumedFinished = false;
   try {
-    const latest = host.listCouncilRounds(run.id).at(-1);
-    round = latest && isCouncilRoundActive(latest) ? latest : await host.startCouncil(run.id);
+    const reusable = reusableRound(await host.latestCouncilRound(run.id));
+    resumedFinished = Boolean(reusable && !isCouncilRoundActive(reusable));
+    round = reusable ?? await host.startCouncil(run.id);
   } catch (error) {
     host.appendEvent("Council review skipped", `The council review could not start: ${error instanceof Error ? error.message : String(error)}`);
-    return;
+    return false;
   }
   round = await waitForRound(host, round.id);
   // A council that applies its findings on its own can fail to apply them; that must not open the PR either.
   if (round.status === "apply-failed") throw new Error(round.error?.trim() || "Fixing the council findings failed.");
   if (round.status !== "ready" && round.status !== "applied") {
     host.appendEvent("Council review skipped", round.error?.trim() || "The council review could not finish.");
-    return;
+    return false;
   }
   const recommended = round.groups.filter((group) => group.decision === "recommended" && !round.appliedGroupIds.includes(group.id));
   if (round.status === "ready" && recommended.length) {
@@ -55,15 +70,25 @@ const runCouncilCheck = async (host: LoopPrCheckHost, run: RunRecord): Promise<v
     round = await waitForRound(host, round.id);
     if (round.status === "apply-failed") throw new Error(round.error?.trim() || "Fixing the council findings failed.");
     host.appendEvent("Council findings fixed", `${String(round.appliedGroupIds.length)} findings were sent back to the agent and fixed.`);
-    return;
+    return true;
+  }
+  if (resumedFinished) return false;
+  if (round.status === "applied") {
+    host.appendEvent("Council findings fixed", `${String(round.appliedGroupIds.length)} findings were fixed by the council.`);
+    return true;
   }
   host.appendEvent("Council review", round.groups.length
     ? `${String(round.groups.length)} findings, none recommended for fixing.`
     : "The reviewers found nothing to fix.");
+  return false;
 };
 
-/** Runs the project's verification commands and lets the agent fix failures a limited number of times. */
-const runVerificationCheck = async (host: LoopPrCheckHost, run: RunRecord): Promise<void> => {
+/**
+ * Runs the project's verification commands and lets the agent fix failures a limited number of times.
+ * A revision that already passed is not verified again. True when a fix turn changed the code.
+ */
+const runVerificationCheck = async (host: LoopPrCheckHost, run: RunRecord): Promise<boolean> => {
+  if (await host.verificationIsCurrent(run.id)) return false;
   for (let attempt = 0; ; attempt += 1) {
     host.assertNotCancelled();
     const result = await host.verifyRun(run.id);
@@ -71,11 +96,11 @@ const runVerificationCheck = async (host: LoopPrCheckHost, run: RunRecord): Prom
     host.assertNotCancelled();
     if (result.status === "unconfigured") {
       host.appendEvent("Verification skipped", "The project has no verification commands. Add them in the project settings.");
-      return;
+      return false;
     }
     if (result.status === "passed") {
       host.appendEvent("Verification passed", result.commands.join("\n"));
-      return;
+      return attempt > 0;
     }
     const reason = result.reason?.trim() || `Verification ended as "${result.status}".`;
     if (result.status !== "failed" || attempt >= LOOP_VERIFICATION_FIX_ATTEMPTS) {
@@ -92,12 +117,25 @@ const runVerificationCheck = async (host: LoopPrCheckHost, run: RunRecord): Prom
   }
 };
 
-/** The checks a loop runs on each iteration before it opens the pull request. */
+/**
+ * The checks a loop runs on each iteration before the UI review, so the screenshots a person approves already
+ * show their fixes. `changed` tells the loop that a fix turn changed the code since the screenshots were taken.
+ */
 export const runLoopPrChecks = async (
   host: LoopPrCheckHost,
   loop: Pick<ProjectLoopRecord, "councilBeforePr" | "verifyBeforePr">,
   run: RunRecord,
+): Promise<{ changed: boolean }> => {
+  const councilChanged = loop.councilBeforePr ? await runCouncilCheck(host, run) : false;
+  const verificationChanged = loop.verifyBeforePr ? await runVerificationCheck(host, run) : false;
+  return { changed: councilChanged || verificationChanged };
+};
+
+/** Verifies the final revision again when the UI review changed the code after verification passed. */
+export const reverifyLoopIteration = async (
+  host: LoopPrCheckHost,
+  loop: Pick<ProjectLoopRecord, "verifyBeforePr">,
+  run: RunRecord,
 ): Promise<void> => {
-  if (loop.councilBeforePr) await runCouncilCheck(host, run);
   if (loop.verifyBeforePr) await runVerificationCheck(host, run);
 };

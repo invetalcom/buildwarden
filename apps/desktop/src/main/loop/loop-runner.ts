@@ -17,7 +17,7 @@ import { ACTIVE_PROJECT_LOOP_STATUSES, isActiveProjectLoopStatus, isLoopCapableP
 import type { BuildWardenDatabase } from "@buildwarden/db";
 import type { GitService } from "@buildwarden/git-service";
 import type { ProjectPrReviewProvider } from "../pr-review/pr-review-types";
-import { runLoopPrChecks } from "./loop-pr-checks";
+import { reverifyLoopIteration, runLoopPrChecks, type LoopPrCheckHost } from "./loop-pr-checks";
 import {
   LOOP_COMMENT_MARKER,
   LOOP_MAX_AI_UI_REVIEW_ROUNDS,
@@ -104,8 +104,11 @@ export interface ProjectLoopRunnerDeps {
   deleteRun(runId: string): Promise<void>;
   askModelForText(cwd: string, modelId: string, input: ProjectLoopAskTextInput): Promise<string>;
   createForgeProvider(projectId: string): Promise<ProjectPrReviewProvider>;
+  /** Council rounds of a run, the latest marked stale when the workspace changed since it started. */
+  getCouncilRounds(runId: string): Promise<CouncilRound[]>;
   startCouncil(runId: string): Promise<CouncilRound>;
   applyCouncilFindings(roundId: string, groupIds: string[]): Promise<CouncilRound>;
+  getRunVerification(runId: string): Promise<RunVerificationState>;
   verifyRun(runId: string): Promise<RunVerificationState>;
   emitLoopChanged(payload: ProjectLoopChangedPayload): void;
   logError(message: string, error: unknown, metadata?: Record<string, unknown>): void;
@@ -567,9 +570,13 @@ abstract class ProjectLoopRunnerCore {
       loop = this.deps.db.getProjectLoop(loopId);
       const run = iteration.runId ? this.deps.db.getRun(iteration.runId) : null;
       if (run && !["awaiting-merge", "addressing-comments"].includes(iteration.status)) {
+        // The checks run first, so the screenshots a person approves already show their fixes.
+        await this.runPrChecks(state, loop, iteration, run);
+        this.assertNotCancelled(state);
         await this.runUiGate(state, loop, iteration, run);
         this.assertNotCancelled(state);
-        await this.runPrChecks(state, loop, iteration, run);
+        // UI feedback turns change code after verification passed; the PR must carry a verified revision.
+        if (loop.verifyBeforePr) await reverifyLoopIteration(this.prCheckHost(state, loop, iteration), loop, run);
         this.assertNotCancelled(state);
       }
       iteration = this.deps.db.getProjectLoopIteration(iterationId);
@@ -584,15 +591,14 @@ abstract class ProjectLoopRunnerCore {
     await this.monitorUntilMerged(state, loopId, iterationId);
   }
 
-  /** Council review and verification the loop was told to run before each pull request. */
-  private async runPrChecks(state: LoopRuntimeState, loop: ProjectLoopRecord, iteration: ProjectLoopIterationRecord, run: RunRecord): Promise<void> {
-    if (!loop.councilBeforePr && !loop.verifyBeforePr) return;
-    await runLoopPrChecks({
-      listCouncilRounds: (runId) => this.deps.db.listCouncilRounds(runId),
+  private prCheckHost(state: LoopRuntimeState, loop: ProjectLoopRecord, iteration: ProjectLoopIterationRecord): LoopPrCheckHost {
+    return {
+      latestCouncilRound: async (runId) => (await this.deps.getCouncilRounds(runId)).at(-1),
       getCouncilRound: (roundId) => this.deps.db.getCouncilRound(roundId),
       startCouncil: (runId) => this.deps.startCouncil(runId),
       applyCouncilFindings: (roundId, groupIds) => this.deps.applyCouncilFindings(roundId, groupIds),
       verifyRun: (runId) => this.deps.verifyRun(runId),
+      verificationIsCurrent: async (runId) => (await this.deps.getRunVerification(runId)).status === "passed",
       followUpAndWait: async (runId, prompt) => {
         await this.deps.followUpRun(runId, prompt, { yoloMode: true });
         return this.waitForRunCompletion(state, runId);
@@ -600,7 +606,25 @@ abstract class ProjectLoopRunnerCore {
       sleep: (ms) => this.sleep(state, ms),
       assertNotCancelled: () => this.assertNotCancelled(state),
       appendEvent: (label, content) => this.appendEvent(loop, "runner", label, content, iteration.id),
-    }, loop, run);
+    };
+  }
+
+  /**
+   * Council review and verification the loop was told to run before each pull request. When their fixes
+   * changed the code and the UI is reviewed, the agent captures the screenshots again before the review.
+   */
+  private async runPrChecks(state: LoopRuntimeState, loop: ProjectLoopRecord, iteration: ProjectLoopIterationRecord, run: RunRecord): Promise<void> {
+    if (!loop.councilBeforePr && !loop.verifyBeforePr) return;
+    const host = this.prCheckHost(state, loop, iteration);
+    const { changed } = await runLoopPrChecks(host, loop, run);
+    if (!changed || loop.uiChangePolicy === "auto") return;
+    this.appendEvent(loop, "ui-review", "Refreshing screenshots", "The fixes may have changed the UI, so the agent captures the affected pages again.", iteration.id);
+    const refreshed = await host.followUpAndWait(run.id, [
+      "Your latest fixes may have changed the UI.",
+      "Capture every affected page again and update the UI screenshot manifest as described in your initial instructions.",
+      "Change no code in this turn.",
+    ].join("\n"));
+    if (refreshed.status !== "completed") throw new Error(`Refreshing the UI screenshots ended as "${refreshed.status}".`);
   }
 
   private async startImplementationRun(

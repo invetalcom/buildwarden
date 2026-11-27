@@ -43,7 +43,9 @@ export class ProjectLoopService extends AppService<
           return this.services.modelText.askModelForText(cwd, context, input);
         },
         createForgeProvider: (projectId) => this.services.forgeRequests.createProjectPrReviewProvider(projectId),
+        getCouncilRounds: (runId) => this.services.council.getCouncilRounds(runId),
         startCouncil: (runId) => this.services.council.startCouncil(runId),
+        getRunVerification: (runId) => this.services.verification.getRunVerification(runId),
         applyCouncilFindings: (roundId, groupIds) => this.services.council.applyCouncilFindings(roundId, groupIds),
         verifyRun: async (runId) => {
           // Verifying without commands throws; the loop reports it and opens the PR anyway.

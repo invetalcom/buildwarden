@@ -15,11 +15,12 @@ const verification = (status: RunVerificationState["status"], reason: string | n
 const createHost = (overrides: Partial<LoopPrCheckHost> = {}) => {
   const events: Array<[string, string]> = [];
   const host: LoopPrCheckHost = {
-    listCouncilRounds: () => [],
+    latestCouncilRound: async () => undefined,
     getCouncilRound: () => round({}),
     startCouncil: async () => round({ status: "reviewing" }),
     applyCouncilFindings: async () => round({ status: "applying" }),
     verifyRun: async () => verification("passed"),
+    verificationIsCurrent: async () => false,
     followUpAndWait: async () => run,
     sleep: async () => undefined,
     assertNotCancelled: () => undefined,
@@ -49,6 +50,30 @@ describe("loop checks before a pull request", () => {
     await runLoopPrChecks(host, { councilBeforePr: true, verifyBeforePr: false }, run);
     expect(applyCouncilFindings).toHaveBeenCalledWith("round-1", ["g1"]);
     expect(events.map(([label]) => label)).toEqual(["Council review", "Council findings fixed"]);
+  });
+
+  it("reports which checks changed the code, and keeps finished results when the loop resumes", async () => {
+    const groups = [{ id: "g1", title: "Missing null check", severity: "high", decision: "recommended", reason: null, findingIds: [] }] as CouncilRound["groups"];
+    const states = [round({ status: "ready", groups }), round({ status: "applied", groups, appliedGroupIds: ["g1"] })];
+    const fresh = createHost({ getCouncilRound: () => states.shift() ?? round({ status: "applied", groups, appliedGroupIds: ["g1"] }) });
+    await expect(runLoopPrChecks(fresh.host, { councilBeforePr: true, verifyBeforePr: false }, run)).resolves.toEqual({ changed: true });
+
+    const startCouncil = vi.fn(async () => round({ status: "reviewing" }));
+    const verifyRun = vi.fn(async () => verification("passed"));
+    const resumed = createHost({
+      latestCouncilRound: async () => round({ status: "applied", groups, appliedGroupIds: ["g1"], stale: true }),
+      getCouncilRound: () => round({ status: "applied", groups, appliedGroupIds: ["g1"] }),
+      verificationIsCurrent: async () => true,
+      startCouncil,
+      verifyRun,
+    });
+    await expect(runLoopPrChecks(resumed.host, { councilBeforePr: true, verifyBeforePr: true }, run)).resolves.toEqual({ changed: false });
+    expect(startCouncil).not.toHaveBeenCalled();
+    expect(verifyRun).not.toHaveBeenCalled();
+
+    const outdated = createHost({ latestCouncilRound: async () => round({ status: "ready", stale: true }), startCouncil });
+    await runLoopPrChecks(outdated.host, { councilBeforePr: true, verifyBeforePr: false }, run);
+    expect(startCouncil).toHaveBeenCalledOnce();
   });
 
   it("fails when the council could not apply its own fixes", async () => {
