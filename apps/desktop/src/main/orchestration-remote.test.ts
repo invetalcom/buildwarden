@@ -316,6 +316,8 @@ describe("delegating to a linked host", () => {
     await delegate("t17");
     await vi.waitFor(() => expect(host.created).toHaveLength(1));
     await vi.waitFor(() => expect(taskByClientId("t17").status).toBe("cancelled"));
+    // The start ends after its first stop attempt, so the polls below can only be retries.
+    await vi.waitFor(() => expect(remote.isStarting(taskByClientId("t17").id)).toBe(false));
     await remote.pollRemoteTasks();
     expect(host.cancelled).toEqual([]);
     hostAway = false;
@@ -346,6 +348,7 @@ describe("delegating to a linked host", () => {
     const unsavedStops = (remote as unknown as { unsavedStops: Map<string, unknown> }).unsavedStops;
     await delegate("t19");
     await vi.waitFor(() => expect(unsavedStops.size).toBe(1));
+    await vi.waitFor(() => expect(remote.isStarting(taskByClientId("t19").id)).toBe(false));
     storageDown = false;
     await remote.pollRemoteTasks();
     expect(host.cancelled).toEqual([]);
