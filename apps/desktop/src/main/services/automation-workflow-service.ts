@@ -142,7 +142,11 @@ export class AutomationWorkflowService extends AppService<"activeWorkers" | "aut
         state.error = null;
         this.save(workflow);
       }
-      const context: AutomationStepContext = { workflow, state, step, index, automation, save: () => this.saveIfActive(workflow) };
+      const context: AutomationStepContext = {
+        workflow, state, step, index, automation,
+        save: () => this.saveIfActive(workflow),
+        isActive: () => this.isStillActive(workflow.id),
+      };
       let progress: AutomationStepProgress;
       try {
         progress = starting ? await this.services.automationSteps.begin(context) : await this.services.automationSteps.check(context);

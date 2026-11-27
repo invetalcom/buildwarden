@@ -30,6 +30,8 @@ export interface AutomationStepContext {
   automation: ProjectAutomationRecord;
   /** Saves the workflow as it is now, e.g. right after a run was started. */
   save(): void;
+  /** False once a person stopped the workflow; nothing may start for it after that. */
+  isActive(): boolean;
 }
 
 export type AutomationStepProgress =
@@ -175,7 +177,7 @@ export class AutomationStepService extends AppService<
     const prompt = this.agentPrompt(context, isPrompt ? automation.prompt : "prompt" in step ? step.prompt : "");
     if (previousRunId) {
       const previous = this.db.getRun(previousRunId);
-      if (this.isRunBusy(previous)) return PENDING;
+      if (this.isRunBusy(previous) || !context.isActive()) return PENDING;
       await this.services.runTurns.followUpRunInternal(
         previousRunId,
         prompt,
@@ -183,6 +185,7 @@ export class AutomationStepService extends AppService<
         { source: "automation", automationWorkflowRunId: workflow.id, automationStepIndex: index },
         { background: true },
       );
+      if (await this.stopIfWorkflowStopped(context, previousRunId)) return PENDING;
       state.runId = previousRunId;
       context.save();
       return WAITING;
@@ -199,6 +202,8 @@ export class AutomationStepService extends AppService<
       runPrompt = `${prompt}\n\n${issue.prompt}`;
       forgeIssue = issue.reference;
     }
+    // Reading the issue takes a moment; a workflow stopped meanwhile starts nothing.
+    if (!context.isActive()) return PENDING;
     const run = await this.services.runLifecycle.createRun({
       projectId: automation.projectId,
       providerAccountId: provider.id,
@@ -216,6 +221,7 @@ export class AutomationStepService extends AppService<
       automationId: automation.id,
       ...(forgeIssue ? { forgeIssue } : {}),
     }, { background: true });
+    if (await this.stopIfWorkflowStopped(context, run.id)) return PENDING;
     state.runId = run.id;
     context.save();
     if (isPrompt) {
@@ -246,6 +252,7 @@ export class AutomationStepService extends AppService<
     const answer = parseAutomationCheckAnswer(latestRunAnswerText(this.db.getRunSteps(run.id)));
     if (answer) return done(answer, step.check);
     if (state.checkReminded) throw new Error("The agent did not answer the step's question with ANSWER: yes or ANSWER: no.");
+    if (!context.isActive()) return WAITING;
     state.checkReminded = true;
     context.save();
     await this.services.runTurns.followUpRunInternal(
@@ -255,7 +262,19 @@ export class AutomationStepService extends AppService<
       { source: "automation", automationWorkflowRunId: workflow.id, automationCheckReminder: true },
       { background: true },
     );
+    await this.stopIfWorkflowStopped(context, run.id);
     return WAITING;
+  }
+
+  /** A turn that started after a person stopped the workflow is stopped too, instead of running unwatched. */
+  private async stopIfWorkflowStopped(context: AutomationStepContext, runId: string): Promise<boolean> {
+    if (context.isActive()) return false;
+    try {
+      await this.services.runTurns.cancelRun(runId);
+    } catch (error) {
+      this.logControllerWarn("Could not stop a run that started after its automation workflow was stopped.", { runId, error });
+    }
+    return true;
   }
 
   private checkQuestion({ state, step }: AutomationStepContext): AutomationStepProgress {
