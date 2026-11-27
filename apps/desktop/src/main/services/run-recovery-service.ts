@@ -29,35 +29,52 @@ export class RunRecoveryService extends AppService<
     const activeStatuses: RunRecord["status"][] = ["queued", "preparing", "running"];
     this.services.followUps.reconcileInterruptedFollowUpDeliveries();
 
+    // Every row is handled on its own: one run whose model, provider or worktree cannot be read
+    // must not leave the runs and chats after it marked as running.
     const staleRuns = this.db.listRunsWithStatuses(activeStatuses).filter((run) => !this.services.activeWorkers.runWorkers.has(run.id));
     for (const run of staleRuns) {
-      const checkpoint = this.services.turnState.getRunCheckpoint(run.id);
-      const model = this.db.getModel(run.modelId);
-      const provider = this.db.getProviderAccount(model.providerAccountId);
-      const providerRuntime = this.services.turnState.resolveRunNativeSession(run, provider).session;
-      const providerRecoverySupported = providerSupportsInterruptedRunRecovery(provider.providerType);
+      const recovery = this.readInterruptedRunRecovery(run);
       this.db.updateRunStatus(run.id, "cancelled", { errorMessage: SESSION_INTERRUPTED_MESSAGE });
-      this.services.workspaceGuard.updateWorktreeStatus(run, "ready");
-      await this.services.runEvents.appendRunEvent(
-        run.id,
-        "status",
-        "Session interrupted",
-        SESSION_INTERRUPTED_MESSAGE,
-        {
+      try {
+        this.services.workspaceGuard.updateWorktreeStatus(run, "ready");
+        await this.services.runEvents.appendRunEvent(run.id, "status", "Session interrupted", SESSION_INTERRUPTED_MESSAGE, {
           sessionInterrupted: true,
-          canRecoverInterruptedSession: providerRecoverySupported && Boolean(checkpoint || providerRuntime?.resumeCursor),
-          recoveryKind: resolveRecoveryKind(providerRecoverySupported, Boolean(checkpoint), Boolean(providerRuntime?.resumeCursor)),
-        },
-      );
+          ...recovery,
+        });
+      } catch (error) {
+        this.logControllerError("Marked an interrupted run cancelled but could not record why.", error, { runId: run.id });
+      }
     }
 
     const staleChats = this.db.listChatsWithStatuses(activeStatuses).filter((chat) => !this.services.activeWorkers.chatWorkers.has(chat.id));
     for (const chat of staleChats) {
-      this.db.closeChatUserInputRequests(chat.id);
       this.db.updateChatStatus(chat.id, "cancelled", { finishedAt: new Date().toISOString() });
-      await this.services.runEvents.appendChatEvent(chat.id, "status", "Session interrupted", SESSION_INTERRUPTED_MESSAGE, {
-        sessionInterrupted: true,
-      });
+      try {
+        this.db.closeChatUserInputRequests(chat.id);
+        await this.services.runEvents.appendChatEvent(chat.id, "status", "Session interrupted", SESSION_INTERRUPTED_MESSAGE, {
+          sessionInterrupted: true,
+        });
+      } catch (error) {
+        this.logControllerError("Marked an interrupted chat cancelled but could not record why.", error, { chatId: chat.id });
+      }
+    }
+  }
+
+  /** Whether an interrupted run can continue; a run whose model or provider cannot be read cannot. */
+  private readInterruptedRunRecovery(run: RunRecord): { canRecoverInterruptedSession: boolean; recoveryKind: ReturnType<typeof resolveRecoveryKind> } {
+    try {
+      const checkpoint = Boolean(this.services.turnState.getRunCheckpoint(run.id));
+      const model = this.db.getModel(run.modelId);
+      const provider = this.db.getProviderAccount(model.providerAccountId);
+      const resumeCursor = Boolean(this.services.turnState.resolveRunNativeSession(run, provider).session?.resumeCursor);
+      const supported = providerSupportsInterruptedRunRecovery(provider.providerType);
+      return {
+        canRecoverInterruptedSession: supported && (checkpoint || resumeCursor),
+        recoveryKind: resolveRecoveryKind(supported, checkpoint, resumeCursor),
+      };
+    } catch (error) {
+      this.logControllerError("Could not read how to recover an interrupted run; it is marked cancelled without recovery.", error, { runId: run.id });
+      return { canRecoverInterruptedSession: false, recoveryKind: null };
     }
   }
 

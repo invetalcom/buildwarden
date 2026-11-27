@@ -91,7 +91,14 @@ const capabilities: Record<ProviderType, Readonly<HarnessCapabilities>> = {
   },
 };
 
-export const getHarnessCapabilities = (providerType: ProviderType): Readonly<HarnessCapabilities> => capabilities[providerType];
+/**
+ * A stored provider type this version does not know (written by a newer version, or since
+ * removed) gets the plain API behavior: no native session, steering or delegation options.
+ */
+const unknownProviderCapabilities: HarnessCapabilities = { ...apiCapabilities, taskExecutionOptions: [] };
+
+export const getHarnessCapabilities = (providerType: ProviderType): Readonly<HarnessCapabilities> =>
+  Object.hasOwn(capabilities, providerType) ? capabilities[providerType] : unknownProviderCapabilities;
 
 /**
  * What a live session reported about itself when it started. Static capabilities describe the
