@@ -369,7 +369,15 @@ export class TailscaleServeService {
   private async removeExposure(loopbackPort: number | null): Promise<TailscaleStatus> {
     const owned = this.ownership();
     const desired = this.requestedExposure() !== "local";
-    if (!owned) return this.removeLeftovers(desired, loopbackPort);
+    const idle = this.status(desired, "available", "Local access only. No BuildWarden Tailscale handler is configured.");
+    if (!owned) return this.removeLeftovers(desired, loopbackPort, idle);
+    const result = await this.removeOwned(owned, desired, loopbackPort);
+    // A handler the record does not name can still forward to this server, for example on a
+    // second port taken over earlier, or one left when the record moved to another port.
+    return result.state === "error" || this.ownership() ? result : this.removeLeftovers(desired, loopbackPort, result);
+  }
+
+  private async removeOwned(owned: Ownership, desired: boolean, loopbackPort: number | null): Promise<TailscaleStatus> {
     let host = owned.host;
     const { target, port } = owned;
     const details = { dnsName: host, endpoint: endpointFor(host, port), httpsPort: port, managed: true };
@@ -415,11 +423,11 @@ export class TailscaleServeService {
   }
 
   /**
-   * Without a record, a handler that forwards exactly to this running server still exposes it:
-   * an earlier install on this computer left it. Local only removes it.
+   * A handler that no record names but that forwards exactly to this running server still exposes
+   * it, for example one an earlier install on this computer left. Local only removes it.
+   * Returns `idle` when there is none.
    */
-  private async removeLeftovers(desired: boolean, loopbackPort: number | null): Promise<TailscaleStatus> {
-    const idle = this.status(desired, "available", "Local access only. No BuildWarden Tailscale handler is configured.");
+  private async removeLeftovers(desired: boolean, loopbackPort: number | null, idle: TailscaleStatus): Promise<TailscaleStatus> {
     if (loopbackPort == null) return idle;
     const located = await this.locate();
     const host = located?.result.exitCode === 0 ? normalizeDnsName(parseJson<TailscaleNodeStatus>(located.result.stdout)?.Self?.DNSName) : null;
@@ -439,7 +447,7 @@ export class TailscaleServeService {
       if (failure) return this.status(desired, "error", `A Tailscale handler on ${endpointFor(host, port)} still forwards to this BuildWarden. ${failure}`, { dnsName: host, httpsPort: port });
     }
     return ports.length === 0 ? idle : this.status(desired, "available",
-      `Local access only. Removed the Tailscale handler an earlier BuildWarden install left on ${ports.map((port) => endpointFor(host, port)).join(", ")}.`, { dnsName: host });
+      `Local access only. Removed a Tailscale handler that still forwarded to this BuildWarden on ${ports.map((port) => endpointFor(host, port)).join(", ")}.`, { dnsName: host });
   }
 
   /** Turns one handler off and verifies it. Returns an error message, or null when it is gone. */
