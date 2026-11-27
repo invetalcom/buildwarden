@@ -60,7 +60,7 @@ createInterface({ input: process.stdin }).on("line", async (line) => {
     send({ id, result: {} });
   } else if (method === "session/list") {
     send({ id, result: params.cursor
-      ? { sessions: [{ sessionId: "s-old", cwd: params.cwd }] }
+      ? { sessions: [{ sessionId: "s-old", cwd: params.cwd }, { sessionId: "x".repeat(501), cwd: params.cwd }] }
       : { sessions: [{ sessionId: "s-new", cwd: params.cwd, title: "Fix build", updatedAt: "2026-11-26T10:00:00Z" }], nextCursor: "page-2" } });
   } else if (method === "session/prompt") {
     let answer = "";

@@ -1107,6 +1107,7 @@ export interface AcpListedSession {
 
 const ACP_LIST_MAX_PAGES = 10;
 const ACP_LIST_MAX_SESSIONS = 200;
+const ACP_LIST_MAX_SESSION_ID_LENGTH = 500;
 
 /**
  * The sessions the agent saved for `cwd`, in the agent's order. Returns `supported: false` when
@@ -1124,9 +1125,10 @@ export async function listAcpSessions(input: { cwd: string; config?: Record<stri
       const listed = await connection.request("session/list", { cwd: input.cwd, ...(cursor ? { cursor } : {}) }, ACP_INITIALIZE_TIMEOUT_MS);
       for (const entry of isRecord(listed) && Array.isArray(listed.sessions) ? listed.sessions.filter(isRecord) : []) {
         const sessionId = asString(entry.sessionId);
-        if (!sessionId) continue;
+        // A shortened id would name another session, or none; an id this long is left out instead.
+        if (!sessionId || sessionId.length > ACP_LIST_MAX_SESSION_ID_LENGTH) continue;
         sessions.push({
-          sessionId: sessionId.slice(0, 500),
+          sessionId,
           cwd: asString(entry.cwd) ?? input.cwd,
           title: asString(entry.title)?.slice(0, 300) ?? null,
           updatedAt: asString(entry.updatedAt) ?? null,
