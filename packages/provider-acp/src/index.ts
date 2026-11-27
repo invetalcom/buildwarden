@@ -379,18 +379,37 @@ export interface AcpHarnessOptions {
   requestUserInput?: (request: RunUserInputRequest) => Promise<RunUserInputAnswers>;
 }
 
-/** Commands compare with their spacing collapsed, and nothing else changed. */
-const normalizeCommandLine = (value: string): string => value.trim().replace(/\s+/g, " ");
+/** The command of an execute call BuildWarden approved: as the user saw it, and as separate words when the agent sent them so. */
+interface ApprovedCommand { text: string; argv: string[] | null }
+
+const approvedCommandOf = (toolCall: Record<string, unknown>): ApprovedCommand | null => {
+  const rawInput = isRecord(toolCall.rawInput) ? toolCall.rawInput : {};
+  if (Array.isArray(rawInput.command) && rawInput.command.length > 0 && rawInput.command.every((word) => typeof word === "string")) {
+    const argv = rawInput.command as string[];
+    return { text: argv.join(" "), argv };
+  }
+  const text = asString(rawInput.command)?.trim();
+  return text ? { text, argv: null } : null;
+};
+
+/** Words joined with spaces read back the same only when no word holds whitespace. */
+const joinsUnambiguously = (words: readonly string[]): boolean => words.every((word) => word.length > 0 && !/\s/.test(word));
 
 /**
- * The forms in which an approved command may reach a terminal. An executable with arguments runs
- * them literally, so it also matches the words joined as the agent showed them. Shell source must
- * match exactly: quotes there decide what runs.
+ * Whether a terminal request runs exactly the command the user approved. Shell source compares as
+ * text, exactly: spacing inside quotes changes what runs. An executable with arguments compares
+ * word by word, or with the line BuildWarden shows for it, or with its words joined as the agent
+ * showed them when that joining cannot hide an argument boundary.
  */
-const terminalCommandForms = (commandLine: string, request: { command: string; args: string[] }): string[] => [
-  normalizeCommandLine(commandLine),
-  ...(request.args.length > 0 ? [normalizeCommandLine([request.command, ...request.args].join(" "))] : []),
-];
+const runsApprovedCommand = (approved: ApprovedCommand, commandLine: string, request: { command: string; args: string[] }): boolean => {
+  if (request.args.length === 0) {
+    const source = request.command.trim();
+    return approved.argv ? joinsUnambiguously(approved.argv) && approved.text === source : approved.text === source;
+  }
+  const argv = [request.command, ...request.args];
+  if (approved.argv) return approved.argv.length === argv.length && approved.argv.every((word, index) => word === argv[index]);
+  return approved.text === commandLine.trim() || (joinsUnambiguously(argv) && approved.text === argv.join(" "));
+};
 
 const fallbackContextBlock = (context: string) =>
   `<earlier_conversation>\nThe agent could not reload its saved session, so this is the conversation so far.\n${context}\n</earlier_conversation>`;
@@ -455,7 +474,7 @@ export class AcpHarnessAdapter implements HarnessAdapter {
     // Full Access never reaches past an inspect-only turn: its commands keep the allowlist and approvals.
     const shellYolo = input.yoloMode === true && writable;
     /** Commands of execute calls BuildWarden approved this turn; the terminal that runs one is not asked about again. */
-    const approvedCommands: string[] = [];
+    const approvedCommands: ApprovedCommand[] = [];
     /** Each BuildWarden terminal and the tool call that shows it. */
     const terminalToolCalls = new Map<string, string>();
     const toolEmitTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -472,8 +491,7 @@ export class AcpHarnessAdapter implements HarnessAdapter {
       resolveCwd: (requested) => resolveWorkspacePath(input.worktreePath, requested),
       ...(this.options.shellEnv ? { env: this.options.shellEnv } : {}),
       authorize: async (commandLine, request) => {
-        const forms = terminalCommandForms(commandLine, request);
-        const approved = approvedCommands.findIndex((command) => forms.includes(command));
+        const approved = approvedCommands.findIndex((command) => runsApprovedCommand(command, commandLine, request));
         if (approved >= 0) {
           approvedCommands.splice(approved, 1);
           return;
@@ -579,7 +597,8 @@ export class AcpHarnessAdapter implements HarnessAdapter {
             }
             if (signal.aborted) return permissionOutcome(undefined);
             grantedToolCalls.add(toolCallId);
-            approvedCommands.push(normalizeCommandLine(command));
+            const approvedCommand = approvedCommandOf(merged);
+            if (approvedCommand) approvedCommands.push(approvedCommand);
             return permissionOutcome(allowOnce);
           }
           return permissionOutcome(pickPermissionOption(params, ["reject_once", "reject_always"]));
@@ -599,8 +618,8 @@ export class AcpHarnessAdapter implements HarnessAdapter {
         }
         const allow = () => {
           if (toolCallId) grantedToolCalls.add(toolCallId);
-          const command = kind === "execute" ? toolCallCommand(merged) : undefined;
-          if (command) approvedCommands.push(normalizeCommandLine(command));
+          const approvedCommand = kind === "execute" ? approvedCommandOf(merged) : null;
+          if (approvedCommand) approvedCommands.push(approvedCommand);
           return permissionOutcome(allowOnce);
         };
         if (input.yoloMode === true) return allow();

@@ -108,9 +108,10 @@ createInterface({ input: process.stdin }).on("line", async (line) => {
     send({ id, result: { sessionId: "s1", modes: { availableModes: [{ id: "default", name: "Default" }, { id: "plan", name: "Plan" }], currentModeId: "default" } } });
   } else if (method === "session/prompt") {
     const sessionId = params.sessionId;
-    const command = process.env.FAKE_COMMAND;
-    const args = JSON.parse(process.env.FAKE_ARGS);
-    update(sessionId, { sessionUpdate: "tool_call", toolCallId: "c1", title: "Run", kind: "execute", status: "pending", rawInput: { command: process.env.FAKE_SHOWN } });
+    const decode = (name) => Buffer.from(process.env[name], "base64").toString("utf8");
+    const command = decode("FAKE_COMMAND");
+    const args = JSON.parse(decode("FAKE_ARGS"));
+    update(sessionId, { sessionUpdate: "tool_call", toolCallId: "c1", title: "Run", kind: "execute", status: "pending", rawInput: { command: decode("FAKE_SHOWN") } });
     const permission = await request("session/request_permission", { sessionId, toolCall: { toolCallId: "c1" },
       options: [{ optionId: "yes", name: "Allow", kind: "allow_once" }, { optionId: "no", name: "Reject", kind: "reject_once" }] });
     if (permission.outcome?.optionId !== "yes") {
@@ -139,23 +140,43 @@ createInterface({ input: process.stdin }).on("line", async (line) => {
 `;
 
 describe("ACP agent running commands in BuildWarden terminals", () => {
-  const setup = (mode: RunExecutionRequest["mode"]) => {
+  const setup = (mode: RunExecutionRequest["mode"], command: { command: string; args: string[]; shown?: string } = {
+    command: process.execPath, args: ["-e", "console.log('hello')"],
+  }) => {
     const { root, workspace } = workspaceRoot();
     const script = join(root, "agent.mjs");
     writeFileSync(script, TERMINAL_AGENT);
-    const args = ["-e", "console.log('hello')"];
-    // Agents show the command as its words; the terminal runs them quoted for the shell.
-    const shown = [process.execPath, ...args].join(" ");
+    // By default the agent shows the command as BuildWarden quotes it for the shell.
+    const shown = command.shown ?? terminalCommandLine(command.command, command.args);
+    // Base64 keeps quotes intact through the agent's environment settings.
+    const encode = (value: string) => Buffer.from(value, "utf8").toString("base64");
     const input: RunExecutionRequest = {
       runId: "run-1", providerAccountId: "acp-1", worktreePath: workspace, mode, prompt: "Run it",
       providerType: "acp", modelId: "default", apiKey: "",
       config: {
         acpCommand: `"${process.execPath}" "${script}"`,
-        acpEnv: [`FAKE_COMMAND=${process.execPath}`, `FAKE_ARGS=${JSON.stringify(args)}`, `FAKE_SHOWN=${shown}`].join("\n"),
+        acpEnv: [`FAKE_COMMAND=${encode(command.command)}`, `FAKE_ARGS=${encode(JSON.stringify(command.args))}`, `FAKE_SHOWN=${encode(shown)}`].join("\n"),
       },
     };
     return { input, shown };
   };
+
+  it("checks a command again when the approval matches it only after collapsing spaces or joining words", async () => {
+    const authorizeShellCommand = vi.fn(async () => undefined);
+    const adapter = new AcpHarnessAdapter(vi.fn(async () => "allow-once" as const), { authorizeShellCommand });
+    // Shell source whose quoted spacing differs from the approved text.
+    const spaced = setup("code", { command: 'echo "a  b"', args: [], shown: 'echo "a b"' });
+    await adapter.run(spaced.input, { tools: [], executeTool: vi.fn() }, () => undefined, new AbortController().signal);
+    expect(authorizeShellCommand).toHaveBeenCalledTimes(1);
+    // One argument with a space, approved as text that reads as two words.
+    const joined = setup("code", { command: "node", args: ["-e", "console.log('a b')"], shown: "node -e console.log('a b')" });
+    await adapter.run(joined.input, { tools: [], executeTool: vi.fn() }, () => undefined, new AbortController().signal);
+    expect(authorizeShellCommand).toHaveBeenCalledTimes(2);
+    // Plain words join unambiguously, so their approval still covers the terminal.
+    const plain = setup("code", { command: "node", args: ["--version"], shown: "node --version" });
+    await adapter.run(plain.input, { tools: [], executeTool: vi.fn() }, () => undefined, new AbortController().signal);
+    expect(authorizeShellCommand).toHaveBeenCalledTimes(2);
+  });
 
   it("asks once in a code turn and shows the command's output in its step", async () => {
     const { input, shown } = setup("code");
@@ -176,11 +197,10 @@ describe("ACP agent running commands in BuildWarden terminals", () => {
   });
 
   it("checks shell source again when it differs from the approved command", async () => {
-    const { input } = setup("code");
+    const { input } = setup("code", { command: process.execPath, args: ["-e", "console.log('hello')"], shown: "echo 'a; b'" });
     const authorizeShellCommand = vi.fn(async () => undefined);
-    const config = { ...input.config, acpEnv: String(input.config?.acpEnv).replace(/FAKE_SHOWN=.*/, "FAKE_SHOWN=echo 'a; b'") };
     await new AcpHarnessAdapter(vi.fn(async () => "allow-once" as const), { authorizeShellCommand })
-      .run({ ...input, config }, { tools: [], executeTool: vi.fn() }, () => undefined, new AbortController().signal);
+      .run(input, { tools: [], executeTool: vi.fn() }, () => undefined, new AbortController().signal);
     expect(authorizeShellCommand).toHaveBeenCalledOnce();
   });
 
