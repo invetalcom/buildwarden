@@ -448,6 +448,10 @@ export class ChatService extends AppService<
     return this.db.listChatsWithSteps();
   }
 
+  async searchChats(query: string): Promise<string[]> {
+    return this.db.searchChats(query);
+  }
+
   async deleteChat(chatId: string): Promise<void> {
     this.services.titles.sessionTitleServiceInstance?.cancel("chat", chatId);
     await this.cancelStartingChat(chatId);

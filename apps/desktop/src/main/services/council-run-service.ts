@@ -40,7 +40,6 @@ export const councilCommittedBaseRef = (
 /** Connects council validation rounds with runs, workspaces and workers. */
 export class CouncilRunService extends AppService<
   | "activeWorkers"
-  | "appState"
   | "processes"
   | "providerRuntime"
   | "runDeletion"
@@ -100,7 +99,7 @@ export class CouncilRunService extends AppService<
       startChild: (round, input) => this.startCouncilChild(round, input),
       messageChild: async (childRunId, prompt) => {
         const child = this.db.getRun(childRunId);
-        await this.services.appState.withPreservedRunSelection(() => this.services.runTurns.followUpRunInternal(childRunId, prompt, { mode: "ask", modelId: child.modelId, yoloMode: false }, { source: "council" }));
+        await this.services.runTurns.followUpRunInternal(childRunId, prompt, { mode: "ask", modelId: child.modelId, yoloMode: false }, { source: "council" }, { background: true });
       },
       stopChild: async (childRunId) => {
         await this.services.processes.stopRunOwnedProcesses(childRunId);
@@ -329,12 +328,13 @@ export class CouncilRunService extends AppService<
     let mode: RunRecord["mode"] = run.mode;
     if (round.kind === "code") mode = "code";
     else if (round.restoreMode) mode = "ask";
-    await this.services.appState.withPreservedRunSelection(() => this.services.runTurns.followUpRunInternal(
+    await this.services.runTurns.followUpRunInternal(
       run.id,
       prompt,
       { mode, modelId: run.modelId, yoloMode: round.kind === "code" && latestUserTurnUsedFullAccess(this.db.getRunSteps(run.id)) },
       { councilRoundId: round.id, councilApply: record, displayPrompt: councilApplyStepContent(record) },
-    ));
+      { background: true },
+    );
   }
 
   onRunEnded({ run, status, waitingForSubagents }: RunEnded): void {

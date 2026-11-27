@@ -3881,6 +3881,9 @@ export interface ChatBookmarkRecord extends SessionTitleFields {
   steps: BookmarkStepRecord[];
 }
 
+/** A saved run or chat as a list shows it, without its steps. */
+export type BookmarkListEntry = Omit<BookmarkRecord, "steps"> | Omit<ChatBookmarkRecord, "steps">;
+
 export interface ChatSummary extends SessionTitleFields {
   id: string;
   prompt: string;
@@ -5752,6 +5755,12 @@ export interface DesktopApi {
   removeChatBookmarkById(bookmarkId: string): Promise<void>;
   isChatBookmarked(chatId: string): Promise<boolean>;
   getChatBookmarksWithSteps(): Promise<ChatBookmarkRecord[]>;
+  /** Saved runs and chats without their steps, newest first. */
+  listBookmarkEntries(): Promise<BookmarkListEntry[]>;
+  /** One saved run or chat with its steps; null when it no longer exists. */
+  getBookmarkWithSteps(bookmarkId: string): Promise<BookmarkRecord | ChatBookmarkRecord | null>;
+  /** Ids of the saved runs and chats whose title, prompt, project or steps contain the text. */
+  searchBookmarks(query: string): Promise<string[]>;
   exportDataBackup(input: DataBackupExportInput): Promise<DataBackupExportResult>;
   selectDataBackupForImport(): Promise<DataBackupImportSelection | null>;
   importDataBackup(input: DataBackupImportInput): Promise<void>;
@@ -5771,6 +5780,8 @@ export interface DesktopApi {
   updateChatFollowUpQueue(chatId: string, action: FollowUpQueueAction): Promise<FollowUpQueueResult>;
   listChats(): Promise<ChatRecord[]>;
   listChatsWithSteps(): Promise<ChatSearchDetail[]>;
+  /** Ids of the standalone chats whose title, prompt or steps contain the text. */
+  searchChats(query: string): Promise<string[]>;
   deleteChat(chatId: string): Promise<void>;
   cancelChat(chatId: string): Promise<void>;
   onChatEvent(listener: (event: ChatEvent) => void): () => void;
@@ -6119,9 +6130,14 @@ export type RemoteOperationMap = {
   getRunChat: DesktopApi["getRunChat"];
   getChatDetail: DesktopApi["getChatDetail"];
   getEarlierChatHistory: DesktopApi["getEarlierChatHistory"];
+  listChats: DesktopApi["listChats"];
   listChatsWithSteps: DesktopApi["listChatsWithSteps"];
   getBookmarksWithSteps: DesktopApi["getBookmarksWithSteps"];
   getChatBookmarksWithSteps: DesktopApi["getChatBookmarksWithSteps"];
+  listBookmarkEntries: DesktopApi["listBookmarkEntries"];
+  getBookmarkWithSteps: DesktopApi["getBookmarkWithSteps"];
+  searchBookmarks: DesktopApi["searchBookmarks"];
+  searchChats: DesktopApi["searchChats"];
   getRunPublishOptions: DesktopApi["getRunPublishOptions"];
   getProjectBranchOverview: DesktopApi["getProjectBranchOverview"];
   getProjectForgeAuthStatus: DesktopApi["getProjectForgeAuthStatus"];
@@ -6673,6 +6689,9 @@ export const IPC_CHANNELS = {
   removeChatBookmarkById: "buildwarden:remove-chat-bookmark-by-id",
   isChatBookmarked: "buildwarden:is-chat-bookmarked",
   getChatBookmarksWithSteps: "buildwarden:get-chat-bookmarks-with-steps",
+  listBookmarkEntries: "buildwarden:list-bookmark-entries",
+  getBookmarkWithSteps: "buildwarden:get-bookmark-with-steps",
+  searchBookmarks: "buildwarden:search-bookmarks",
   exportDataBackup: "buildwarden:export-data-backup",
   selectDataBackupForImport: "buildwarden:select-data-backup-for-import",
   importDataBackup: "buildwarden:import-data-backup",
@@ -6689,6 +6708,7 @@ export const IPC_CHANNELS = {
   updateChatFollowUpQueue: "buildwarden:update-chat-follow-up-queue",
   listChats: "buildwarden:list-chats",
   listChatsWithSteps: "buildwarden:list-chats-with-steps",
+  searchChats: "buildwarden:search-chats",
   deleteChat: "buildwarden:delete-chat",
   cancelChat: "buildwarden:cancel-chat",
   chatEvent: "buildwarden:chat-event",

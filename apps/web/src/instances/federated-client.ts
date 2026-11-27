@@ -1,11 +1,15 @@
 import { APP_SETTING_KEYS, type AppSnapshot, type DesktopApi, type RunOrganizationSnapshot } from "@buildwarden/shared";
-import { mapEntityIds, parseScopedId, scopedId, isRemoteBrowserSetting, readRemoteUiSettings, type BuildWardenClient } from "@buildwarden/renderer";
+import { IncompleteHostSearchError, mapEntityIds, parseScopedId, scopedId, isRemoteBrowserSetting, readRemoteUiSettings, type BuildWardenClient } from "@buildwarden/renderer";
 import { EMPTY_SNAPSHOT } from "@buildwarden/renderer/logic";
 import type { InstanceManager, ConnectedInstance } from "./instance-manager";
 
 type Method = keyof DesktopApi;
 type Callable = (...args: unknown[]) => unknown;
-const AGGREGATE_READS = new Set<Method>(["getAttentionInbox", "getBookmarksWithSteps", "getChatBookmarksWithSteps", "listChats", "listChatsWithSteps", "searchRunUserInput"]);
+const AGGREGATE_READS = new Set<Method>(["getAttentionInbox", "getBookmarksWithSteps", "getChatBookmarksWithSteps", "listBookmarkEntries", "listChats", "listChatsWithSteps", "searchBookmarks", "searchChats", "searchRunUserInput"]);
+// These return bare ids, which carry no field name to recognize them by.
+const ID_LIST_READS = new Set<Method>(["searchBookmarks", "searchChats", "searchRunUserInput"]);
+// Each of these searches the unloaded steps of one list. A host that cannot answer leaves the search incomplete.
+const SEARCHED_LISTS = new Map<Method, Method>([["searchBookmarks", "listBookmarkEntries"], ["searchChats", "listChats"]]);
 const HOST_METHODS = new Set<Method>([
   "getSubscriptionLimits", "getSubscriptionLimitsAvailability", "useSubscriptionReset",
   "importSkill", "removeImportedSkill",
@@ -142,16 +146,30 @@ export class FederatedWorkspace {
   }
   private async aggregate(method: Method, args: unknown[]): Promise<unknown[]> {
     const entries = this.manager.getSnapshot().instances;
+    const searchedList = SEARCHED_LISTS.get(method);
+    let incomplete = false;
     const results = await Promise.all(entries.map(async (entry) => {
       const key = JSON.stringify([entry.connection.id, method, args]);
-      if (entry.status !== "online" || !entry.client) return this.cache.get(key) ?? [];
+      if (entry.status !== "online" || !entry.client) {
+        // Its items are still listed from the cache, so a search that cannot reach it misses their steps.
+        if (searchedList && this.cache.get(JSON.stringify([entry.connection.id, searchedList, []]))?.length) incomplete = true;
+        return this.cache.get(key) ?? [];
+      }
       try {
         const result = await rawClientCall(entry.client, method, args) as unknown[];
-        const mapped = method === "searchRunUserInput" ? result.map((id) => scopedId(entry.connection.id, String(id))) : encode(entry.connection.id, result);
+        const mapped = ID_LIST_READS.has(method) ? result.map((id) => scopedId(entry.connection.id, String(id))) : encode(entry.connection.id, result);
         this.cache.set(key, mapped); return mapped;
-      } catch { return this.cache.get(key) ?? []; }
+      } catch {
+        if (searchedList) incomplete = true;
+        return this.cache.get(key) ?? [];
+      }
     }));
-    return results.flat();
+    const combined = results.flat();
+    // Each host lists its saved items newest first; the combined list keeps that promise.
+    if (method === "listBookmarkEntries") (combined as Array<{ bookmarkedAt: string }>).sort((left, right) => right.bookmarkedAt.localeCompare(left.bookmarkedAt));
+    // A list stays usable with what was cached. A search must say that a host did not answer, or its missing matches would look like "no match".
+    if (incomplete) throw new IncompleteHostSearchError(combined as string[]);
+    return combined;
   }
   /** A facade captures the default host. In-flight settings callbacks cannot jump to another host. */
   client(defaultId: string | null): BuildWardenClient {

@@ -35,7 +35,6 @@ const isSameProjectAutomationRevision = (current: ProjectAutomationRecord, previ
 /** Schedules and starts project automations. */
 export class AutomationService extends AppService<
   | "activeWorkers"
-  | "appState"
   | "forgeIssueActions"
   | "orchestrationDispatch"
   | "projects"
@@ -220,7 +219,7 @@ export class AutomationService extends AppService<
     const provider = this.db.getProviderAccount(model.providerAccountId);
     const project = this.db.getProject(automation.projectId);
     const hasExecutionOptions = Object.keys(automation.executionOptions).length > 0;
-    const run = await this.services.appState.withPreservedRunSelection(() => this.services.runLifecycle.createRun({
+    const run = await this.services.runLifecycle.createRun({
       projectId: automation.projectId,
       providerAccountId: provider.id,
       modelId: model.id,
@@ -238,7 +237,7 @@ export class AutomationService extends AppService<
       executionOptions: hasExecutionOptions ? automation.executionOptions : undefined,
       kind: "automation",
       automationId: automation.id,
-    }));
+    }, { background: true });
     this.events.publish("automationStarted", {
       automationId: automation.id,
       automationName: automation.name,

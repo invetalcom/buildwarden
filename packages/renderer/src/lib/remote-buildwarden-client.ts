@@ -12,17 +12,23 @@ import {
   createDisabledProviderCliUpdateSnapshot,
   parseRunWorkspaceLayoutsSetting,
   type AppSnapshot,
+  type BookmarkListEntry,
+  type BookmarkRecord,
+  type ChatBookmarkRecord,
   type DesktopApi,
   type RemoteApiMethod,
   type RemoteApiMethodArgs,
   type RemoteApiMethodResult,
   type RemoteAccessScope,
+  type RemoteRpcErrorCode,
   type RemoteRpcResponse,
   type RemoteStreamEventPayloadMap,
   type RemoteStreamEventType,
   type RemoteWebSocketServerMessage,
 } from "@buildwarden/shared";
+import { bookmarkMatchesSearch } from "./bookmark-search";
 import type { BuildWardenClient, BuildWardenClientCapabilities } from "./buildwarden-client-core";
+import { chatDetailMatchesSearch } from "./chat-search";
 import {
   REMOTE_BROWSER_METHODS,
   REMOTE_MUTATION_METHODS,
@@ -52,6 +58,33 @@ const REMOTE_LOCAL_SETTING_KEYS = new Set<string>([
 ]);
 
 const LOCAL_SETTINGS_STORAGE_KEY = "buildwarden.remote.ui-settings.v1";
+
+/** A host's refusal of one operation, with the reason a client can act on. */
+class RemoteOperationError extends Error {
+  constructor(message: string, readonly code: RemoteRpcErrorCode) {
+    super(message);
+    this.name = "RemoteOperationError";
+  }
+}
+
+/**
+ * Runs an operation that hosts of an earlier version do not have. Such a host answers
+ * "method-not-found"; `olderHost` then gets the same result from operations it does have.
+ */
+const withOlderHostFallback = async <Result>(call: () => Promise<Result>, olderHost: () => Promise<Result>): Promise<Result> => {
+  try {
+    return await call();
+  } catch (error) {
+    if (!(error instanceof RemoteOperationError) || error.code !== "method-not-found") throw error;
+    return olderHost();
+  }
+};
+
+const withoutSteps = (bookmark: BookmarkRecord | ChatBookmarkRecord): BookmarkListEntry => {
+  const entry: Partial<BookmarkRecord | ChatBookmarkRecord> = { ...bookmark };
+  delete entry.steps;
+  return entry as BookmarkListEntry;
+};
 
 export const remoteDraftScope = (baseUrl?: string): string => {
   try {
@@ -400,9 +433,15 @@ export const createRemoteBuildWardenClient = (options: RemoteBuildWardenClientOp
     }
     const payload = await response.json() as RemoteRpcResponse;
     if (!payload.ok) {
-      throw new Error(payload.error.message);
+      throw new RemoteOperationError(payload.error.message, payload.error.code);
     }
     return payload.result as RemoteApiMethodResult<Method>;
+  };
+
+  /** Every saved run and chat with its steps: all that a host without the lighter operations offers. */
+  const loadBookmarksWithSteps = async (): Promise<Array<BookmarkRecord | ChatBookmarkRecord>> => {
+    const [runs, chats] = await Promise.all([invoke("getBookmarksWithSteps", []), invoke("getChatBookmarksWithSteps", [])]);
+    return [...runs, ...chats].sort((left, right) => right.bookmarkedAt.localeCompare(left.bookmarkedAt));
   };
 
   const loadSnapshot = async (method: "getSnapshot" | "refreshSnapshot"): Promise<AppSnapshot> => {
@@ -422,6 +461,31 @@ export const createRemoteBuildWardenClient = (options: RemoteBuildWardenClientOp
     capabilities,
     getSnapshot: () => loadSnapshot("getSnapshot"),
     refreshSnapshot: () => loadSnapshot("refreshSnapshot"),
+    listBookmarkEntries: () => withOlderHostFallback(
+      () => invoke("listBookmarkEntries", []),
+      async () => (await loadBookmarksWithSteps()).map(withoutSteps),
+    ),
+    getBookmarkWithSteps: (bookmarkId) => withOlderHostFallback(
+      () => invoke("getBookmarkWithSteps", [bookmarkId]),
+      async () => (await loadBookmarksWithSteps()).find((bookmark) => bookmark.id === bookmarkId) ?? null,
+    ),
+    searchBookmarks: (query) => withOlderHostFallback(
+      () => invoke("searchBookmarks", [query]),
+      // Like the host's own search, an empty text matches nothing (the page filters treat it as "show all").
+      async () => query.trim()
+        ? (await loadBookmarksWithSteps()).filter((bookmark) => bookmarkMatchesSearch(bookmark, query)).map((bookmark) => bookmark.id)
+        : [],
+    ),
+    listChats: () => withOlderHostFallback(
+      () => invoke("listChats", []),
+      async () => (await invoke("listChatsWithSteps", [])).map((detail) => detail.chat),
+    ),
+    searchChats: (query) => withOlderHostFallback(
+      () => invoke("searchChats", [query]),
+      async () => query.trim()
+        ? (await invoke("listChatsWithSteps", [])).filter((detail) => chatDetailMatchesSearch(detail, query)).map((detail) => detail.chat.id)
+        : [],
+    ),
     // The host answers with a path on itself; the frame must load it from the host, not this page's origin.
     getVisualReplyFrame: async (runId, stepId) => {
       const frame = await invoke("getVisualReplyFrame", [runId, stepId]);

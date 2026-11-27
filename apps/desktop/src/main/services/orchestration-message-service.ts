@@ -16,7 +16,6 @@ import { parseMetadataRecord } from "./run-step-content";
 /** Delivers messages from coordinators and users to child runs. */
 export class OrchestrationMessageService extends AppService<
   | "activeWorkers"
-  | "appState"
   | "followUps"
   | "orchestration"
   | "orchestrationCoordinator"
@@ -54,7 +53,7 @@ export class OrchestrationMessageService extends AppService<
     try {
       for (const message of messages) this.db.updateOrchestrationTaskMessage(message.id, "delivering");
       await this.db.flushDurable();
-      await this.services.appState.withPreservedRunSelection(() => this.services.runTurns.followUpRunInternal(
+      await this.services.runTurns.followUpRunInternal(
         child.id,
         formatChildTaskMessages(messages),
         { mode: child.mode, modelId: child.modelId, yoloMode: task.permissionMode !== "supervised" && childExecutionSettings?.yoloMode === true },
@@ -66,7 +65,8 @@ export class OrchestrationMessageService extends AppService<
           orchestrationResume: true,
           displayPrompt: childTaskMessagesDisplayText(messages),
         },
-      ));
+        { background: true },
+      );
     } catch (error) {
       if (!this.childTurnTookMessages(child.id, messages)) {
         // The child never saw these messages, so it keeps the state it stopped in. Reporting the

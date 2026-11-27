@@ -59,11 +59,16 @@ export const applyLiveRunToSnapshot = (snapshot: AppSnapshot, run: RunListItem):
     const runs = standardRuns.filter((candidate) => candidate.listVisibility !== "for-later");
     const forLaterRuns = standardRuns.filter((candidate) => candidate.listVisibility === "for-later");
     const orchestratedRuns = entry.orchestratedRuns.map((candidate) => candidate.id === run.id ? run : candidate);
+    // A Project Lab implementation is listed only with its thread.
+    const labThreads = entry.labThreads.some((item) => item.thread.implementationRunId === run.id)
+      ? entry.labThreads.map((item) => item.thread.implementationRunId === run.id ? { ...item, implementationRun: run } : item)
+      : entry.labThreads;
     return {
       ...entry,
       runs,
       forLaterRuns,
       orchestratedRuns,
+      labThreads,
       activeRuns: runs.filter(isActiveRun),
       recentRuns: runs.slice(0, 12),
     };

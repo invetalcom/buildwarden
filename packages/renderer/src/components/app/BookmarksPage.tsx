@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import type { BookmarkRecord, ChatBookmarkRecord } from "@buildwarden/shared";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { BookmarkListEntry, BookmarkRecord, ChatBookmarkRecord } from "@buildwarden/shared";
 import { Bookmark, Search, X } from "lucide-react";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -7,24 +7,15 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
 import { BookmarkHistoryRow } from "./BookmarkHistoryRow";
 import { Input } from "../ui/input";
+import { SearchIncompleteNote } from "./SearchIncompleteNote";
+import { bookmarkEntryMatchesSearch } from "../../lib/bookmark-search";
 import { useBuildWardenClient } from "../../lib/buildwarden-client";
+import { useHostSearch } from "../../lib/use-host-search";
 
+/** A saved run or chat with its steps, as its detail page shows it. */
 export type BookmarkItem = BookmarkRecord | ChatBookmarkRecord;
 
-const isChatBookmark = (b: BookmarkItem): b is ChatBookmarkRecord => "originalChatId" in b;
-
-const bookmarkMatchesSearch = (bookmark: BookmarkItem, query: string): boolean => {
-  if (!query.trim()) return true;
-  const q = query.toLowerCase();
-  if (bookmark.title?.toLowerCase().includes(q) || bookmark.prompt.toLowerCase().includes(q)) return true;
-  if (!isChatBookmark(bookmark) && bookmark.projectName.toLowerCase().includes(q)) return true;
-  return bookmark.steps.some(
-    (step) =>
-      step.title.toLowerCase().includes(q) ||
-      step.content.toLowerCase().includes(q) ||
-      step.eventType.toLowerCase().includes(q),
-  );
-};
+const isChatBookmark = (bookmark: BookmarkListEntry): boolean => "originalChatId" in bookmark;
 
 interface BookmarksPageProps {
   onSelectBookmark: (bookmark: BookmarkItem) => void;
@@ -38,22 +29,21 @@ export const BookmarksPage = ({
   onRemoveChatBookmarkById,
 }: BookmarksPageProps) => {
   const [searchQuery, setSearchQuery] = useState("");
-  const [bookmarks, setBookmarks] = useState<BookmarkItem[]>([]);
+  // The list holds no steps. The host searches them, and one bookmark's steps load when it is opened.
+  const [bookmarks, setBookmarks] = useState<BookmarkListEntry[]>([]);
+  // Counts the loaded lists. A reload can hold other items, or other titles, in the same number.
+  const [listRevision, setListRevision] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [openError, setOpenError] = useState<string | null>(null);
+  const openingRef = useRef(false);
   const buildwarden = useBuildWardenClient();
 
   const loadBookmarks = useCallback(async () => {
     if (!buildwarden) return;
     setLoading(true);
     try {
-      const [runBookmarks, chatBookmarks] = await Promise.all([
-        buildwarden.getBookmarksWithSteps(),
-        buildwarden.getChatBookmarksWithSteps(),
-      ]);
-      const merged = [...runBookmarks, ...chatBookmarks].sort(
-        (a, b) => new Date(b.bookmarkedAt).getTime() - new Date(a.bookmarkedAt).getTime(),
-      );
-      setBookmarks(merged);
+      setBookmarks(await buildwarden.listBookmarkEntries());
+      setListRevision((revision) => revision + 1);
     } finally {
       setLoading(false);
     }
@@ -75,22 +65,43 @@ export const BookmarksPage = ({
     return () => { unsubscribeRun?.(); unsubscribeChat?.(); unsubscribeSettings?.(); };
   }, [buildwarden, loadBookmarks]);
 
+  const searchBookmarks = useCallback((text: string) => buildwarden.searchBookmarks(text), [buildwarden]);
+  const { ids: stepMatches, failed: stepSearchFailed, retry: retryStepSearch } = useHostSearch(searchQuery, searchBookmarks, listRevision);
+
   const filteredBookmarks = useMemo(() => {
     return bookmarks
-      .filter((b) => bookmarkMatchesSearch(b, searchQuery))
+      .filter((bookmark) => bookmarkEntryMatchesSearch(bookmark, searchQuery) || stepMatches?.has(bookmark.id))
       .sort((a, b) => new Date(b.bookmarkedAt).getTime() - new Date(a.bookmarkedAt).getTime());
-  }, [bookmarks, searchQuery]);
+  }, [bookmarks, searchQuery, stepMatches]);
 
   const hasSearch = Boolean(searchQuery.trim());
   const chatCount = bookmarks.filter(isChatBookmark).length;
   const runCount = bookmarks.length - chatCount;
-  const removeBookmark = async (bookmark: BookmarkItem) => {
+  const removeBookmark = async (bookmark: BookmarkListEntry) => {
     if (isChatBookmark(bookmark)) {
       await onRemoveChatBookmarkById(bookmark.id);
     } else {
       await onRemoveRunBookmarkById(bookmark.id);
     }
     void loadBookmarks();
+  };
+  const openBookmark = async (bookmark: BookmarkListEntry) => {
+    if (openingRef.current) return;
+    openingRef.current = true;
+    setOpenError(null);
+    try {
+      const saved = await buildwarden.getBookmarkWithSteps(bookmark.id);
+      if (saved) {
+        onSelectBookmark(saved);
+        return;
+      }
+      setOpenError("This bookmark was removed.");
+      void loadBookmarks();
+    } catch (caught) {
+      setOpenError(caught instanceof Error ? caught.message : "Could not open the bookmark.");
+    } finally {
+      openingRef.current = false;
+    }
   };
 
   return (
@@ -112,6 +123,8 @@ export const BookmarksPage = ({
               <CardDescription>{loading ? "Loading bookmarks..." : hasSearch
                 ? `${filteredBookmarks.length} matching of ${bookmarks.length} bookmarks.`
                 : `${runCount} ${runCount === 1 ? "run" : "runs"}, ${chatCount} ${chatCount === 1 ? "chat" : "chats"}.`}</CardDescription>
+              {stepSearchFailed ? <SearchIncompleteNote scope="the activity logs" onRetry={retryStepSearch} /> : null}
+              {openError ? <p role="alert" className="text-xs text-[var(--ec-danger-strong)]">{openError}</p> : null}
             </div>
           </div>
           <span className="relative block min-w-40 max-w-72 flex-1">
@@ -135,7 +148,7 @@ export const BookmarksPage = ({
             key={`${isChatBookmark(bookmark) ? "chat" : "run"}:${bookmark.id}`}
             bookmark={bookmark}
             canRemove={isChatBookmark(bookmark) ? buildwarden.capabilities.chatMutations : buildwarden.capabilities.runMutations}
-            onSelect={onSelectBookmark}
+            onSelect={(entry) => void openBookmark(entry)}
             onRemove={removeBookmark}
           />)}</div>}
         </CardContent>

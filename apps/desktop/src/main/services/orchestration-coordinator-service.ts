@@ -25,7 +25,6 @@ import { parseMetadataRecord } from "./run-step-content";
 /** Wakes coordinators and delivers news about their tasks. */
 export class OrchestrationCoordinatorService extends AppService<
   | "activeWorkers"
-  | "appState"
   | "followUps"
   | "orchestration"
   | "runEvents"
@@ -304,12 +303,13 @@ export class OrchestrationCoordinatorService extends AppService<
     try {
       const prompt = this.buildOrchestrationResumePrompt(orchestration);
       const coordinator = this.db.getRun(orchestration.coordinatorRunId);
-      await this.deliverOrchestrationUpdate(orchestration, (deliveryMetadata) => this.services.appState.withPreservedRunSelection(() => this.services.runTurns.followUpRunInternal(
+      await this.deliverOrchestrationUpdate(orchestration, (deliveryMetadata) => this.services.runTurns.followUpRunInternal(
         coordinator.id,
         prompt,
         { mode: coordinator.mode, modelId: coordinator.modelId, delegationEnabled: true, yoloMode: fullAccess },
         { source: "orchestration", orchestrationResume: true, displayPrompt: orchestrationUpdateDisplayText(prompt), ...deliveryMetadata },
-      )));
+        { background: true },
+      ));
       this.db.appendOrchestrationEvent({
         orchestrationId,
         type: "coordinator-resumed",

@@ -9,6 +9,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
 import { Input } from "../ui/input";
 import { RUN_DISPLAY_STATUS_LABELS } from "./run-display-status";
+import { SearchIncompleteNote } from "./SearchIncompleteNote";
 import { InstanceBadge, useInstanceContext } from "../../lib/instance-context";
 
 interface ChatHistoryProps {
@@ -18,6 +19,9 @@ interface ChatHistoryProps {
   readOnly: boolean;
   searchQuery: string;
   onSearchChange: (query: string) => void;
+  /** The messages could not be searched, so the list holds only the chats that match by title or prompt. */
+  searchIncomplete?: boolean;
+  onRetrySearch?: () => void;
   modelNameById: ReadonlyMap<string, string>;
   onSelectChat: (chat: ChatRecord) => void;
   onDeleteChat: (chatId: string) => void | Promise<void>;
@@ -67,7 +71,7 @@ const ChatHistoryRow = ({ chat, modelName, readOnly, onSelectChat, onDeleteChat 
   );
 };
 
-export const ChatHistory = ({ chats, totalCount, loading, readOnly, searchQuery, onSearchChange, modelNameById, onSelectChat, onDeleteChat }: ChatHistoryProps) => {
+export const ChatHistory = ({ chats, totalCount, loading, readOnly, searchQuery, onSearchChange, searchIncomplete = false, onRetrySearch, modelNameById, onSelectChat, onDeleteChat }: ChatHistoryProps) => {
   const hasSearch = Boolean(searchQuery.trim());
   return (
     <Card className="flex min-h-0 min-w-0 flex-1 flex-col rounded-xl shadow-none">
@@ -77,6 +81,7 @@ export const ChatHistory = ({ chats, totalCount, loading, readOnly, searchQuery,
           <div>
             <CardTitle>Chat History</CardTitle>
             <CardDescription>{loading ? "Loading conversations…" : hasSearch ? `${chats.length} matching of ${totalCount} chats.` : `${totalCount} ${totalCount === 1 ? "conversation" : "conversations"}.`}</CardDescription>
+            {searchIncomplete && onRetrySearch ? <SearchIncompleteNote scope="the chat messages" onRetry={onRetrySearch} /> : null}
           </div>
         </div>
         <span className="relative block min-w-40 max-w-72 flex-1">

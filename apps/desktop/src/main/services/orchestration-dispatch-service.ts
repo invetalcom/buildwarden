@@ -32,7 +32,6 @@ const ORCHESTRATION_MAX_DEFERRALS = 3;
 /** Accepts delegated tasks and starts, defers and retries their child runs. */
 export class OrchestrationDispatchService extends AppService<
   | "activeWorkers"
-  | "appState"
   | "orchestration"
   | "orchestrationCoordinator"
   | "orchestrationMessages"
@@ -361,12 +360,13 @@ export class OrchestrationDispatchService extends AppService<
   private async continueDeferredOrchestrationChild(task: OrchestrationTaskRecord): Promise<void> {
     const child = this.db.getRun(task.childRunId ?? "");
     const settings = latestRunExecutionSettings(this.db.getRunSteps(child.id));
-    await this.services.appState.withPreservedRunSelection(() => this.services.runTurns.followUpRunInternal(
+    await this.services.runTurns.followUpRunInternal(
       child.id,
       DEFERRED_CHILD_RESUME_PROMPT,
       { mode: child.mode, modelId: child.modelId, yoloMode: task.permissionMode !== "supervised" && settings?.yoloMode === true },
       { orchestrationTaskId: task.id, orchestrationResume: true },
-    ));
+      { background: true },
+    );
     this.db.updateOrchestrationTask(task.id, {
       status: "running",
       attentionReason: null,

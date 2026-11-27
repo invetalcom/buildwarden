@@ -26,7 +26,6 @@ import { readPrWatchTurnResult } from "./run-step-content";
 /** Connects pull request watching with runs and their workspaces. */
 export class RunPrWatchService extends AppService<
   | "activeWorkers"
-  | "appState"
   | "followUps"
   | "forgeRequests"
   | "runBranches"
@@ -47,12 +46,13 @@ export class RunPrWatchService extends AppService<
       getInstructions: (projectId) => parseProjectPrWatchInstructionsSetting(this.db.getSettings()[APP_SETTING_KEYS.projectPrWatchInstructions])[projectId] ?? "",
       checkWorkspace: (run, summary, mode) => this.checkPrWatchWorkspace(run, summary, mode),
       startTurn: async (run, prompt, wake) => {
-        await this.services.appState.withPreservedRunSelection(() => this.services.runTurns.followUpRunInternal(
+        await this.services.runTurns.followUpRunInternal(
           run.id,
           prompt,
           { mode: "code", modelId: run.modelId, yoloMode: latestUserTurnUsedFullAccess(this.db.getRunSteps(run.id)) },
           { displayPrompt: prompt, prWatchWake: wake },
-        ));
+          { background: true },
+        );
       },
       readTurn: (runId, wakeId) => readPrWatchTurnResult(this.db.getRun(runId), this.db.getRunSteps(runId), wakeId),
       hasUncommittedChanges: (run) => this.gitService.hasChanges(this.services.workspaceGuard.getEffectiveRunWorkspacePath(run, this.db.getProject(run.projectId))),

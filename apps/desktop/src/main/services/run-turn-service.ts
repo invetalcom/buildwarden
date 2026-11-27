@@ -9,7 +9,7 @@ import {
   withContextHandoff,
 } from "../provider-context-handoff";
 import { AppService } from "./app-service";
-import { SELECTED_PROJECT_KEY, SELECTED_RUN_KEY } from "./app-service-constants";
+import { type RunStartOptions, SELECTED_PROJECT_KEY, SELECTED_RUN_KEY } from "./app-service-constants";
 import { ORCHESTRATION_CANCELLABLE_STATUSES } from "./orchestration-policy";
 import { providerAllowsMissingApiKey } from "./provider-model-support";
 import { resolveProviderExecutionOptions } from "./run-execution-settings";
@@ -77,8 +77,9 @@ export class RunTurnService extends AppService<
     prompt: string,
     options?: RunFollowUpOptions,
     extraLogMetadata?: Record<string, unknown>,
+    start?: RunStartOptions,
   ): Promise<RunRecord> {
-    return this.services.workspaceGuard.serializeRunStart(runId, () => this.followUpRunUnlocked(runId, prompt, options, extraLogMetadata));
+    return this.services.workspaceGuard.serializeRunStart(runId, () => this.followUpRunUnlocked(runId, prompt, options, extraLogMetadata, start));
   }
 
   private async followUpRunUnlocked(
@@ -86,6 +87,7 @@ export class RunTurnService extends AppService<
     prompt: string,
     options?: RunFollowUpOptions,
     extraLogMetadata?: Record<string, unknown>,
+    start?: RunStartOptions,
   ): Promise<RunRecord> {
     let run = this.db.getRun(runId);
     const project = this.db.getProject(run.projectId);
@@ -117,8 +119,10 @@ export class RunTurnService extends AppService<
     const followUpLogContent = (typeof displayPrompt === "string" ? displayPrompt : userText) || "(no text)";
 
     this.db.touchProject(project.id);
-    this.db.setSetting(SELECTED_PROJECT_KEY, project.id);
-    this.db.setSetting(SELECTED_RUN_KEY, run.id);
+    if (!start?.background) {
+      this.db.setSetting(SELECTED_PROJECT_KEY, project.id);
+      this.db.setSetting(SELECTED_RUN_KEY, run.id);
+    }
     run = this.db.updateRunConfiguration(run.id, {
       providerAccountId: provider.id,
       modelId: model.id,

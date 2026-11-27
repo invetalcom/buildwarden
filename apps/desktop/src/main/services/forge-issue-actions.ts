@@ -43,7 +43,7 @@ import { AppService } from "./app-service";
 import { projectForgeTokenSecretKey } from "./forge-request-policy";
 
 /** Connects GitHub and GitLab issues with tasks, runs and automations. */
-export class ForgeIssueActions extends AppService<"activeWorkers" | "appState" | "forgeRequests" | "modelText" | "runLifecycle"> {
+export class ForgeIssueActions extends AppService<"activeWorkers" | "forgeRequests" | "modelText" | "runLifecycle"> {
   private forgeIssueServiceInstance?: ForgeIssueService;
 
   get forgeIssues(): ForgeIssueService {
@@ -381,7 +381,7 @@ export class ForgeIssueActions extends AppService<"activeWorkers" | "appState" |
       // The issue may have been closed or unlabelled since the list was read.
       const wantedLabel = automation.label.trim().toLowerCase();
       if (thread.issue.state !== "open" || !thread.issue.labels.some((label) => label.name.trim().toLowerCase() === wantedLabel)) continue;
-      await this.services.appState.withPreservedRunSelection(() => this.services.runLifecycle.createRun({
+      await this.services.runLifecycle.createRun({
         projectId,
         providerAccountId: provider.id,
         modelId: model.id,
@@ -399,7 +399,7 @@ export class ForgeIssueActions extends AppService<"activeWorkers" | "appState" |
           subIssues: thread.subIssues,
         })],
         forgeIssue: { projectId, provider: thread.issue.provider, number: thread.issue.number, url: thread.issue.url, title: thread.issue.title },
-      }));
+      }, { background: true });
       started += 1;
       handled.push(issue.number);
       this.writeForgeIssueAutomationHandled(projectId, { issueNumbers: handled, listReadAt: plan.listReadAt });

@@ -36,6 +36,7 @@ import type {
   PendingRunRewind,
   RunRewindArchive,
   AppSnapshot,
+  BookmarkListEntry,
   BookmarkRecord,
   BookmarkStepRecord,
   BookmarkSummary,
@@ -719,6 +720,10 @@ export class BuildWardenDatabase {
       // Match JavaScript's Unicode case folding while filtering history in SQL.
       this.db.function("history_contains", { deterministic: true }, (text, query) =>
         String(text ?? "").toLowerCase().includes(String(query ?? "")) ? 1 : 0);
+      // The same for a step's response text, which leaves out display-only image bytes.
+      this.db.function("history_source_contains", { deterministic: true }, (content, metadataJson, query) =>
+        getResponseSourceText({ content: String(content ?? ""), metadataJson: String(metadataJson ?? "") })
+          .toLowerCase().includes(String(query ?? "")) ? 1 : 0);
       this.exec("pragma busy_timeout = 5000");
       // auto_vacuum only takes effect before the first table exists. Existing files switch on their
       // next compaction, which runs VACUUM; reclaimFreePages then returns freed space without one.
@@ -1221,8 +1226,9 @@ export class BuildWardenDatabase {
     return Boolean(row);
   }
 
-  getBookmarksWithSteps(): BookmarkRecord[] {
-    const bookmarks = this.all<Omit<BookmarkRecord, "steps">>(
+  /** Saved runs without their steps; `bookmarkId` narrows the list to one of them. */
+  private listRunBookmarkEntries(bookmarkId?: string): Array<Omit<BookmarkRecord, "steps">> {
+    return this.all<Omit<BookmarkRecord, "steps">>(
       `
       select
         id,
@@ -1237,30 +1243,75 @@ export class BuildWardenDatabase {
         run_created_at as runCreatedAt,
         bookmarked_at as bookmarkedAt
       from bookmarks
+      ${bookmarkId === undefined ? "" : "where id = ?"}
       order by bookmarked_at desc
       `,
-    );
+      bookmarkId === undefined ? [] : [bookmarkId],
+    ).map((bookmark) => ({ ...bookmark, modelId: bookmark.modelId ?? null }));
+  }
 
-    return bookmarks.map((bm) => {
-      const steps = this.all<BookmarkStepRecord>(
-        `
-        select
-          id,
-          bookmark_id as bookmarkId,
-          event_type as eventType,
-          title,
-          content,
-          metadata_json as metadataJson,
-          created_at as createdAt
-        from bookmark_steps
-        where bookmark_id = ?
-        order by created_at asc
-        `,
-        [bm.id],
-      );
-      const modelId = (bm as { modelId?: string | null }).modelId ?? null;
-      return { ...bm, modelId, steps };
-    });
+  private getBookmarkSteps(table: "bookmark_steps" | "chat_bookmark_steps", bookmarkId: string): BookmarkStepRecord[] {
+    const owner = table === "bookmark_steps" ? "bookmark_id" : "chat_bookmark_id";
+    return this.all<BookmarkStepRecord>(
+      `
+      select
+        id,
+        ${owner} as bookmarkId,
+        event_type as eventType,
+        title,
+        content,
+        metadata_json as metadataJson,
+        created_at as createdAt
+      from ${table}
+      where ${owner} = ?
+      order by created_at asc
+      `,
+      [bookmarkId],
+    );
+  }
+
+  getBookmarksWithSteps(): BookmarkRecord[] {
+    return this.listRunBookmarkEntries().map((bookmark) => ({ ...bookmark, steps: this.getBookmarkSteps("bookmark_steps", bookmark.id) }));
+  }
+
+  /** Saved runs and chats as a list shows them, newest first. Their steps are loaded when one is opened. */
+  listBookmarkEntries(): BookmarkListEntry[] {
+    return [...this.listRunBookmarkEntries(), ...this.listChatBookmarkEntries()]
+      .sort((left, right) => right.bookmarkedAt.localeCompare(left.bookmarkedAt));
+  }
+
+  /** One saved run or chat with its steps; null when it was removed. */
+  getBookmarkWithSteps(bookmarkId: string): BookmarkRecord | ChatBookmarkRecord | null {
+    const run = this.listRunBookmarkEntries(bookmarkId)[0];
+    if (run) return { ...run, steps: this.getBookmarkSteps("bookmark_steps", run.id) };
+    const chat = this.listChatBookmarkEntries(bookmarkId)[0];
+    return chat ? { ...chat, steps: this.getBookmarkSteps("chat_bookmark_steps", chat.id) } : null;
+  }
+
+  /**
+   * Ids of the saved runs and chats whose title, prompt, project or steps contain the text,
+   * ignoring case. The steps are compared inside SQLite, so their text is not loaded for it.
+   */
+  searchBookmarks(query: string): string[] {
+    const text = query.trim().toLowerCase();
+    if (!text) return [];
+    const title = `case when ${SESSION_TITLES_ENABLED_SQL} then b.title else null end`;
+    const stepMatches = (table: string, owner: string) => `exists (
+      select 1 from ${table} s where s.${owner} = b.id
+        and (history_contains(s.title, ?) or history_contains(s.content, ?) or history_contains(s.event_type, ?)))`;
+    const runs = this.all<{ id: string }>(
+      `select b.id from bookmarks b
+       where history_contains(${title}, ?) or history_contains(b.prompt, ?) or history_contains(b.project_name, ?)
+         or ${stepMatches("bookmark_steps", "bookmark_id")}`,
+      [text, text, text, text, text, text],
+    );
+    const chats = this.all<{ id: string }>(
+      `select b.id from chat_bookmarks b
+       where history_contains(${title}, ?) or history_contains(b.prompt, ?)
+         or ${stepMatches("chat_bookmark_steps", "chat_bookmark_id")}`,
+      [text, text, text, text, text],
+    );
+    return [...runs, ...chats].map((row) => row.id);
   }
 
   listChats(): ChatSummary[] {
@@ -1526,6 +1577,27 @@ export class BuildWardenDatabase {
     }));
   }
 
+  /**
+   * Ids of the standalone chats whose title, prompt or steps contain the text, ignoring case.
+   * A step is compared by the same text that `listChatsWithSteps` returns for it.
+   */
+  searchChats(query: string): string[] {
+    const text = query.trim().toLowerCase();
+    if (!text) return [];
+    return this.all<{ id: string }>(
+      `select c.id from chats c
+       where c.run_id is null and (
+         history_contains(case when ${SESSION_TITLES_ENABLED_SQL} then c.title else null end, ?)
+         or history_contains(c.prompt, ?)
+         or exists (
+           select 1 from chat_steps s where s.chat_id = c.id
+             and (history_contains(s.title, ?) or history_contains(s.event_type, ?)
+               or history_source_contains(s.content, s.metadata_json, ?))))
+       order by c.updated_at desc`,
+      [text, text, text, text, text],
+    ).map((row) => row.id);
+  }
+
   /** One transaction, so a failed attachment write cannot leave a partial bookmark that a retry skips. */
   addChatBookmark(chatId: string): void {
     this.transaction(() => this.insertChatBookmark(chatId));
@@ -1577,8 +1649,9 @@ export class BuildWardenDatabase {
     return Boolean(row);
   }
 
-  getChatBookmarksWithSteps(): ChatBookmarkRecord[] {
-    const bookmarks = this.all<Omit<ChatBookmarkRecord, "steps">>(
+  /** Saved chats without their steps; `bookmarkId` narrows the list to one of them. */
+  private listChatBookmarkEntries(bookmarkId?: string): Array<Omit<ChatBookmarkRecord, "steps">> {
+    return this.all<Omit<ChatBookmarkRecord, "steps">>(
       `
       select
         id,
@@ -1590,30 +1663,15 @@ export class BuildWardenDatabase {
         chat_created_at as chatCreatedAt,
         bookmarked_at as bookmarkedAt
       from chat_bookmarks
+      ${bookmarkId === undefined ? "" : "where id = ?"}
       order by bookmarked_at desc
       `,
-    );
+      bookmarkId === undefined ? [] : [bookmarkId],
+    ).map((bookmark) => ({ ...bookmark, modelId: bookmark.modelId ?? null }));
+  }
 
-    return bookmarks.map((bm) => {
-      const steps = this.all<BookmarkStepRecord>(
-        `
-        select
-          id,
-          chat_bookmark_id as bookmarkId,
-          event_type as eventType,
-          title,
-          content,
-          metadata_json as metadataJson,
-          created_at as createdAt
-        from chat_bookmark_steps
-        where chat_bookmark_id = ?
-        order by created_at asc
-        `,
-        [bm.id],
-      );
-      const modelId = (bm as { modelId?: string | null }).modelId ?? null;
-      return { ...bm, modelId, steps };
-    });
+  getChatBookmarksWithSteps(): ChatBookmarkRecord[] {
+    return this.listChatBookmarkEntries().map((bookmark) => ({ ...bookmark, steps: this.getBookmarkSteps("chat_bookmark_steps", bookmark.id) }));
   }
 
   createChat(providerAccountId: string, modelId: string, prompt: string, runId?: string | null): ChatRecord {

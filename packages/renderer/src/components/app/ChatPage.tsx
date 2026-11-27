@@ -4,7 +4,6 @@ import { ComposerDraftStatus } from "./ComposerDraftStatus";
 import {
   appendChatAttachmentFiles,
   type ChatAttachmentPayload,
-  type ChatSearchDetail,
   type ChatRecord,
   type ModelExecutionProfile,
   type ProviderExecutionOptions,
@@ -15,7 +14,8 @@ import { ArrowUp } from "lucide-react";
 import { ChatAttachmentPicker } from "./ChatAttachmentPicker";
 import { RunComposer } from "./RunComposer";
 import { readFilesAsChatPayloads } from "../../lib/read-chat-attachments";
-import { chatDetailMatchesSearch } from "../../lib/chat-search";
+import { chatMatchesSearch } from "../../lib/chat-search";
+import { useHostSearch } from "../../lib/use-host-search";
 import { Badge } from "../ui/badge";
 import { CardDescription, CardHeader, CardTitle } from "../ui/card";
 import { ChatHistory } from "./ChatHistory";
@@ -61,7 +61,8 @@ export const ChatPage = ({
   onDeleteChat,
 }: ChatPageProps) => {
   const [searchQuery, setSearchQuery] = useState("");
-  const [chatDetails, setChatDetails] = useState<ChatSearchDetail[]>([]);
+  // The list holds no steps; the host searches them.
+  const [chats, setChats] = useState<ChatRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const draft = useComposerDraft("new-chat");
   const { prompt: newChatPrompt, setPrompt: setNewChatPrompt, files: newChatFiles, setFiles: setNewChatFiles } = draft;
@@ -85,9 +86,9 @@ export const ChatPage = ({
     liveChats.current.clear();
     setLoading(true);
     try {
-      const data = await buildwarden.listChatsWithSteps();
+      const data = await buildwarden.listChats();
       if (sequence !== loadSequence.current) return;
-      setChatDetails(data.map((detail) => ({ ...detail, chat: liveChats.current.get(detail.chat.id) ?? detail.chat })));
+      setChats(data.map((chat) => liveChats.current.get(chat.id) ?? chat));
     } finally {
       if (sequence === loadSequence.current) setLoading(false);
     }
@@ -98,7 +99,7 @@ export const ChatPage = ({
     const unsubscribe = buildwarden.onChatEvent?.((event) => {
       if (!event.chat) return;
       liveChats.current.set(event.chatId, event.chat);
-      setChatDetails((current) => current.map((detail) => detail.chat.id === event.chatId ? { ...detail, chat: event.chat! } : detail));
+      setChats((current) => current.map((chat) => chat.id === event.chatId ? event.chat! : chat));
     });
     const unsubscribeSettings = buildwarden.onAppSettingsChanged?.(() => { void loadChats(); });
     return () => { invalidateLoads(); unsubscribe?.(); unsubscribeSettings?.(); };
@@ -111,11 +112,15 @@ export const ChatPage = ({
     setSelectedModelId(defaultModelId || modelOptions[0]?.id || "");
   }, [defaultModelId, modelOptions, selectedModelId]);
 
+  const searchChats = useCallback((text: string) => buildwarden.searchChats(text), [buildwarden]);
+  // A chat's steps grow while it runs; its update time changes with them.
+  const chatsRevision = useMemo(() => chats.map((chat) => `${chat.id}:${chat.updatedAt}`).join("|"), [chats]);
+  const { ids: stepMatches, failed: stepSearchFailed, retry: retryStepSearch } = useHostSearch(searchQuery, searchChats, chatsRevision);
   const filteredChats = useMemo(() => {
-    return chatDetails
-      .filter((d) => chatDetailMatchesSearch(d, searchQuery))
-      .sort((a, b) => new Date(b.chat.updatedAt).getTime() - new Date(a.chat.updatedAt).getTime());
-  }, [chatDetails, searchQuery]);
+    return chats
+      .filter((chat) => chatMatchesSearch(chat, searchQuery) || stepMatches?.has(chat.id))
+      .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+  }, [chats, searchQuery, stepMatches]);
 
   const handleNewChat = async () => {
     const prompt = newChatPrompt.trim();
@@ -162,7 +167,7 @@ export const ChatPage = ({
             </p>
           ) : null}
         </div>
-        <Badge tone="neutral" className="shrink-0">{chatDetails.length} {chatDetails.length === 1 ? "chat" : "chats"}</Badge>
+        <Badge tone="neutral" className="shrink-0">{chats.length} {chats.length === 1 ? "chat" : "chats"}</Badge>
       </CardHeader>
 
       {!readOnly ? <RunComposer
@@ -208,12 +213,14 @@ export const ChatPage = ({
       /> : null}
 
       <ChatHistory
-        chats={filteredChats.map(({ chat }) => chat)}
-        totalCount={chatDetails.length}
+        chats={filteredChats}
+        totalCount={chats.length}
         loading={loading}
         readOnly={readOnly}
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
+        searchIncomplete={stepSearchFailed}
+        onRetrySearch={retryStepSearch}
         modelNameById={modelNameById}
         onSelectChat={onSelectChat}
         onDeleteChat={async (chatId) => {

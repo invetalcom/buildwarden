@@ -245,6 +245,65 @@ describe("run-scoped chats", () => {
     expect(JSON.stringify(result).length).toBeLessThan(2000);
     expect(db.getChatDetail(chat.id).steps[0].content).toBe(image);
   });
+  it("finds standalone chats by title, prompt and step text without matching image bytes", async () => {
+    const db = await makeDb();
+    const { provider, model, run } = addRunFixture(db);
+    const chat = db.createChat(provider.id, model.id, "Images");
+    const image = `![Preview](data:image/png;base64,${"ABCD".repeat(100)})`;
+    db.appendChatEvent(chat.id, "output", "Answer", image, { responseSourceText: "Description ![Preview](preview.png)" });
+    db.appendChatEvent(chat.id, "output", "Legacy", `${image} Legacy description`);
+    const other = db.createChat(provider.id, model.id, "Explain signals");
+    const runChat = db.createChat(provider.id, model.id, "Description of the run", run.id);
+    db.renameSessionTitle("chat", other.id, "Reactive state");
+
+    expect(db.searchChats("DESCRIPTION")).toEqual([chat.id]);
+    expect(db.searchChats("legacy desc")).toEqual([chat.id]);
+    expect(db.searchChats("abcdabcd")).toEqual([]);
+    expect(db.searchChats(" signals ")).toEqual([other.id]);
+    expect(db.searchChats("reactive")).toEqual([other.id]);
+    expect(db.searchChats("output")).toEqual([chat.id]);
+    expect(db.searchChats("  ")).toEqual([]);
+    // A run's chat belongs to its run and is not on the Chats page.
+    expect(db.getChat(runChat.id).prompt).toBe("Description of the run");
+    expect(db.searchChats("description of the run")).toEqual([]);
+  });
+
+  it("lists saved runs and chats without steps, opens one with them, and searches the steps", async () => {
+    const db = await makeDb();
+    const { provider, model, run } = addRunFixture(db);
+    db.appendRunStep(run.id, "output", "Summary", "Improved the contrast of cards");
+    const chat = db.createChat(provider.id, model.id, "Explain signals");
+    db.appendChatEvent(chat.id, "output", "Answer", "Signals track their dependencies");
+    db.addBookmark(run.id);
+    db.addChatBookmark(chat.id);
+
+    const entries = db.listBookmarkEntries();
+    const savedRun = entries.find((entry) => "originalRunId" in entry)!;
+    const savedChat = entries.find((entry) => "originalChatId" in entry)!;
+    expect(entries).toHaveLength(2);
+    expect(entries.map((entry) => entry.bookmarkedAt)).toEqual(entries.map((entry) => entry.bookmarkedAt).toSorted().toReversed());
+    expect(savedRun).toMatchObject({ originalRunId: run.id, projectName: "Repo", prompt: "Implement" });
+    expect(JSON.stringify(entries)).not.toContain("contrast");
+    expect(entries.every((entry) => !("steps" in entry))).toBe(true);
+
+    expect(db.getBookmarkWithSteps(savedRun.id)).toEqual(db.getBookmarksWithSteps()[0]);
+    expect(db.getBookmarkWithSteps(savedChat.id)).toEqual(db.getChatBookmarksWithSteps()[0]);
+    expect(db.getBookmarkWithSteps(savedChat.id)?.steps.map((step) => step.content)).toContain("Signals track their dependencies");
+    expect(db.getBookmarkWithSteps("missing")).toBeNull();
+
+    expect(db.searchBookmarks("CONTRAST")).toEqual([savedRun.id]);
+    expect(db.searchBookmarks("repo")).toEqual([savedRun.id]);
+    expect(db.searchBookmarks("dependencies")).toEqual([savedChat.id]);
+    expect(db.searchBookmarks("explain")).toEqual([savedChat.id]);
+    expect(db.searchBookmarks("output").toSorted()).toEqual([savedRun.id, savedChat.id].toSorted());
+    expect(db.searchBookmarks("nothing like this")).toEqual([]);
+    expect(db.searchBookmarks("")).toEqual([]);
+
+    // A saved copy stays searchable after its original is gone.
+    db.deleteChat(chat.id);
+    expect(db.searchBookmarks("dependencies")).toEqual([savedChat.id]);
+  });
+
   it("persists question answers, preserves questions, and rejects duplicate or invalid replies", async () => {
     const db = await makeDb();
     const { provider, model } = addRunFixture(db);

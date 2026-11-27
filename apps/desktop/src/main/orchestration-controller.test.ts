@@ -547,6 +547,7 @@ describe("coordinator Full Access on wake", () => {
       expect.any(String),
       expect.objectContaining({ yoloMode: fullAccess }),
       expect.anything(),
+      { background: true },
     );
   });
 

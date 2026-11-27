@@ -250,8 +250,8 @@ export class TurnStateStore extends AppService {
     };
   }
 
-  buildPriorRunMessagesFromSteps(runId: string): Array<Record<string, unknown>> {
-    return buildPriorRunMessagesFromSteps(this.db.getRunSteps(runId), this.db.resolveAttachmentBlob);
+  buildPriorRunMessages(steps: ReturnType<BuildWardenDatabase["getRunSteps"]>): Array<Record<string, unknown>> {
+    return buildPriorRunMessagesFromSteps(steps, this.db.resolveAttachmentBlob);
   }
 
   getInitialRunAttachments(runId: string): ChatAttachmentPayload[] {
