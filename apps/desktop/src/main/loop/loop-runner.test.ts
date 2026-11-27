@@ -48,6 +48,7 @@ describe("ProjectLoopRunner", () => {
   let worktreeSetup: ((worktreePath: string) => void) | null;
   let runner: ProjectLoopRunner;
   let failRunDeletion: boolean;
+  let stoppedCouncilRunIds: string[];
 
   const fakeGitService = {
     fetchProjectBranches: async () => undefined,
@@ -217,6 +218,7 @@ describe("ProjectLoopRunner", () => {
 
   beforeEach(async () => {
     failRunDeletion = false;
+    stoppedCouncilRunIds = [];
     tempRoot = mkdtempSync(join(tmpdir(), "buildwarden-loop-test-"));
     db = new BuildWardenDatabase(join(tempRoot, "test.sqlite"));
     await db.init();
@@ -275,6 +277,7 @@ describe("ProjectLoopRunner", () => {
       createForgeProvider: async () => fakeForgeProvider(),
       getCouncilRounds: async () => [],
       startCouncil: async () => { throw new Error("No reviewers are configured."); },
+      stopCouncilForRun: async (runId) => { stoppedCouncilRunIds.push(runId); },
       getRunVerification: async () => { throw new Error("Verification is not configured in this test."); },
       applyCouncilFindings: async () => { throw new Error("No reviewers are configured."); },
       verifyRun: async () => { throw new Error("Verification is not configured in this test."); },
@@ -470,6 +473,7 @@ describe("ProjectLoopRunner", () => {
     expect(db.getProjectLoopDetail(loop.id).iterations[0]?.status).toBe("cancelled");
 
     const runIds = db.getProjectLoopDetail(loop.id).iterations.flatMap((iteration) => iteration.runId ? [iteration.runId] : []);
+    expect(stoppedCouncilRunIds).toEqual(runIds);
     failRunDeletion = failDeletion;
     expect(await runner.deleteLoop(loop.id)).toEqual({ deletedRunIds: failDeletion ? [] : runIds });
     expect(() => db.getProjectLoop(loop.id)).toThrow(/not found/);

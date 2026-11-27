@@ -107,6 +107,8 @@ export interface ProjectLoopRunnerDeps {
   /** Council rounds of a run, the latest marked stale when the workspace changed since it started. */
   getCouncilRounds(runId: string): Promise<CouncilRound[]>;
   startCouncil(runId: string): Promise<CouncilRound>;
+  /** Stops council reviews of a run that are still reviewing or assessing. */
+  stopCouncilForRun(runId: string): Promise<void>;
   applyCouncilFindings(roundId: string, groupIds: string[]): Promise<CouncilRound>;
   getRunVerification(runId: string): Promise<RunVerificationState>;
   verifyRun(runId: string): Promise<RunVerificationState>;
@@ -334,6 +336,10 @@ abstract class ProjectLoopRunnerCore {
     const iterations = this.deps.db.listProjectLoopIterations(loopId);
     for (const iteration of iterations) {
       if (iteration.runId) {
+        // A review the loop started would otherwise finish later and may even apply fixes to the run.
+        await this.deps.stopCouncilForRun(iteration.runId).catch((error) => {
+          this.deps.logWarn("Could not stop the council review of a loop iteration run.", { loopId, runId: iteration.runId, error });
+        });
         let run: RunRecord | null = null;
         try {
           run = this.deps.db.getRun(iteration.runId);

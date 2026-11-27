@@ -45,6 +45,7 @@ export class ProjectLoopService extends AppService<
         createForgeProvider: (projectId) => this.services.forgeRequests.createProjectPrReviewProvider(projectId),
         getCouncilRounds: (runId) => this.services.council.getCouncilRounds(runId),
         startCouncil: (runId) => this.services.council.startCouncil(runId),
+        stopCouncilForRun: (runId) => this.services.council.getCouncilService().stopForRun(runId),
         getRunVerification: (runId) => this.services.verification.getRunVerification(runId),
         applyCouncilFindings: (roundId, groupIds) => this.services.council.applyCouncilFindings(roundId, groupIds),
         verifyRun: async (runId) => {
