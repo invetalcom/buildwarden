@@ -449,6 +449,17 @@ describe("several BuildWarden instances on one host", () => {
     expect(handlers.get(8443)?.target).toBe("http://127.0.0.1:9000");
   });
 
+  it("Local only reports a leftover handler on a shared port instead of claiming it is gone", async () => {
+    const { service, handlers, changes } = fakeTailscale(
+      { 443: { target: target(47831), extraPath: true } },
+      { [APP_SETTING_KEYS.remoteAccessExposure]: "local" },
+    );
+
+    await expect(service.disable(47831)).resolves.toMatchObject({ state: "error", httpsPort: 443, message: expect.stringContaining("other handlers share") });
+    expect(changes()).toEqual([]);
+    expect(handlers.get(443)?.target).toBe(target(47831));
+  });
+
   it("Local only keeps a handler that forwards to another loopback port", async () => {
     const { service, changes } = fakeTailscale({ 443: { target: target(47831) } }, { [APP_SETTING_KEYS.remoteAccessExposure]: "local" });
 

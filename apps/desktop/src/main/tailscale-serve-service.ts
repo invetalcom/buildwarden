@@ -428,7 +428,12 @@ export class TailscaleServeService {
     try { config = await this.readConfig(located.executable); }
     catch { return idle; }
     const target = proxyTarget(loopbackPort);
-    const ports = TAILSCALE_HTTPS_PORTS.filter((port) => ownsWholePort(config, host, port, target));
+    const ports = TAILSCALE_HTTPS_PORTS.filter((port) => rootProxyForHost(config, host, port) === target);
+    // Turning a shared port off would remove the other handlers too, so it stays an error to fix by hand.
+    const shared = ports.find((port) => !ownsWholePort(config, host, port, target));
+    if (shared !== undefined) {
+      return this.status(desired, "error", `A Tailscale handler on ${endpointFor(host, shared)} still forwards to this BuildWarden, and other handlers share its port (${describePort(config, host, shared)}). Remove it by hand, then retry.`, { dnsName: host, httpsPort: shared });
+    }
     for (const port of ports) {
       const failure = await this.turnOff(located.executable, config, host, port);
       if (failure) return this.status(desired, "error", `A Tailscale handler on ${endpointFor(host, port)} still forwards to this BuildWarden. ${failure}`, { dnsName: host, httpsPort: port });
